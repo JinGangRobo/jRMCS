@@ -1,7 +1,13 @@
-# RMCS
+# jRMCS
+JGROBO modified version of RMCS.
 RoboMaster Control System based on ROS2.
 
 快速开始: [quick-start](https://github.com/Alliance-Algorithm/RMCS/wiki/Quick-Start)
+
+## Information
+此仓库为JGROBO队内二次开发以符合自身情况的RMCS版本，基础代码和外围子模块大致与上游RMCS同步，但仍存在不兼容
+
+故开设本仓库以避免潜在的误用与兼容问题，以及便于从上游同步或未来向上游贡献。
 
 ## Development
 
