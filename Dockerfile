@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         arm64) arch_tag=aarch64; arch_dir=aarch64 ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    download_url="https://github.com/Alliance-Algorithm/hik-mvs/releases/latest/download/mvs-sdk-${arch_tag}.tar.gz"; \
+    download_url="https://github.com/JinGangRobo/hik-mvs/releases/latest/download/mvs-sdk-${arch_tag}.tar.gz"; \
     mkdir -p /tmp/mvs-src \
         "/opt/mvs-usb3-core/lib/${arch_dir}" \
         /opt/mvs-usb3-core/lib/cmake/MVSUSB3Core \
