@@ -24,12 +24,12 @@ main-jrmcs分支为本项目的主分支与默认分支，main分支保留用作
 
 下载开发镜像：
 ```bash
-docker pull qzhhhi/rmcs-develop:latest
+docker pull mide233/jrmcs-develop:latest
 ```
 
 如需交叉编译环境，可下载：
 ```bash
-docker pull qzhhhi/rmcs-develop:latest-full
+docker pull mide233/jrmcs-develop:latest-full
 ```
 
 也可自行使用 `Dockerfile` 构建，参见 [镜像构建指南](docs/zh-cn/build_docker_image.md)。
@@ -138,19 +138,19 @@ sudo udevadm trigger
 下载部署镜像：
 
 ```bash
-docker pull qzhhhi/rmcs-develop:latest
+docker pull mide233/jrmcs-develop:latest
 ```
 
 如果不方便在 MiniPC 上配置代理，可以在开发机上下载镜像后，使用
 
 ```bash
-docker save qzhhhi/rmcs-runtime:latest > rmcs-runtime.tar
+docker save mide233/jrmcs-runtime:latest > jrmcs-runtime.tar
 ```
 
-然后使用任意方式（如 scp）将 `rmcs-runtime.tar` 传送到 MiniPC 上，并在其上执行：
+然后使用任意方式（如 scp）将 `jrmcs-runtime.tar` 传送到 MiniPC 上，并在其上执行：
 
 ```bash
-docker load -i rmcs-runtime.tar
+docker load -i jrmcs-runtime.tar
 ```
 
 即获取部署镜像。
@@ -160,7 +160,7 @@ docker load -i rmcs-runtime.tar
 在 MiniPC 终端中输入：
 
 ```bash
-docker run -d --restart=always --privileged --network=host -v /dev:/dev qzhhhi/rmcs-runtime:latest
+docker run -d --restart=always --privileged --network=host -v /dev:/dev mide233/jrmcs-runtime:latest
 ```
 
 即可启动部署镜像，此后镜像将保持开机自启。

@@ -1,6 +1,6 @@
 services:
-  rmcs-develop:
-    image: qzhhhi/rmcs-develop:latest-full
+  jrmcs-develop:
+    image: mide233/jrmcs-develop:latest-full
     privileged: true
     network_mode: host
     init: true

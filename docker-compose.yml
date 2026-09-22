@@ -1,6 +1,6 @@
 services:
-  rmcs-develop:
-    image: qzhhhi/rmcs-develop:latest
+  jrmcs-develop:
+    image: mide233/jrmcs-develop:latest
     user: "1000:1000"
     privileged: true
     volumes:

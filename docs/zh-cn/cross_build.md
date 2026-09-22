@@ -1,11 +1,11 @@
 # RMCS 交叉编译使用说明（第一阶段）
 
-本文档说明 `rmcs-develop:latest-full`、`build-rmcs-cross` 与 CI 的约定。
+本文档说明 `jrmcs-develop:latest-full`、`build-rmcs-cross` 与 CI 的约定。
 
 ## 1. 镜像语义
 
-- `qzhhhi/rmcs-develop:latest`：原有开发镜像，行为不变。
-- `qzhhhi/rmcs-develop:latest-full`：`latest` 的超集，额外提供 cross 工具链与对向架构 sysroot。
+- `mide233/jrmcs-develop:latest`：原有开发镜像，行为不变。
+- `mide233/jrmcs-develop:latest-full`：`latest` 的超集，额外提供 cross 工具链与对向架构 sysroot。
 
 对应关系：
 
@@ -76,10 +76,10 @@ readelf -h rmcs_ws/install-cross-arm64/lib/librmcs_core.so
 
 ## 6. CI 维护约定
 
-- CI 先构建并推送 `qzhhhi/rmcs-base` 双架构 digest。
+- CI 先构建并推送 `mide233/jrmcs-base` 双架构 digest。
 - 构建 `latest-full` 时显式传入：
-  - `SYSROOT_IMAGE_AMD64=<rmcs-base amd64 digest>`
-  - `SYSROOT_IMAGE_ARM64=<rmcs-base arm64 digest>`
+  - `SYSROOT_IMAGE_AMD64=<jrmcs-base amd64 digest>`
+  - `SYSROOT_IMAGE_ARM64=<jrmcs-base arm64 digest>`
 - `latest-full` 在每个架构 runner 上执行最小 smoke：
   - sysroot 目录存在
   - cross 编译器可执行

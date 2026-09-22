@@ -13,9 +13,9 @@ on:
       - rmcs_ws/toolchain.cmake
 
 env:
-  REGISTRY_IMAGE_BASE: qzhhhi/rmcs-base
-  REGISTRY_IMAGE_DEVELOP: qzhhhi/rmcs-develop
-  REGISTRY_IMAGE_RUNTIME: qzhhhi/rmcs-runtime
+  REGISTRY_IMAGE_BASE: mide233/jrmcs-base
+  REGISTRY_IMAGE_DEVELOP: mide233/jrmcs-develop
+  REGISTRY_IMAGE_RUNTIME: mide233/jrmcs-runtime
 
 jobs:
   build_base:
@@ -46,7 +46,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: rmcs-base
+          target: jrmcs-base
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE_BASE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=docker-build-base-${{ matrix.arch }}
@@ -120,7 +120,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: rmcs-develop
+          target: jrmcs-develop
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE_DEVELOP }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=docker-build-develop-${{ matrix.arch }}
@@ -144,7 +144,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: rmcs-develop-full
+          target: jrmcs-develop-full
           platforms: linux/${{ matrix.arch }}
           build-args: |
             SYSROOT_IMAGE_AMD64=${{ env.REGISTRY_IMAGE_BASE }}@${{ steps.resolve.outputs.base_digest_amd64 }}
@@ -171,7 +171,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: rmcs-runtime
+          target: jrmcs-runtime
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE_RUNTIME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=docker-build-runtime-${{ matrix.arch }}

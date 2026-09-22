@@ -8,7 +8,7 @@
 docker-compose up -d
 
 # And then execute it
-docker-compose exec -it rmcs-develop zsh
+docker-compose exec -it jrmcs-develop zsh
 
 # Enjoy your nvim
 # This config is same with your system

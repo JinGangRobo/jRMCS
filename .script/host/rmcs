@@ -97,7 +97,7 @@ function main() {
         exit 1
     fi
 
-    local service="rmcs-develop"
+    local service="jrmcs-develop"
 
     case "$command" in
     zsh)

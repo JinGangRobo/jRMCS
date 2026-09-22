@@ -1,11 +1,11 @@
 // For format details, see https://containers.dev/implementors/json_reference/
 {
-    "name": "rmcs-develop",
+    "name": "jrmcs-develop",
     "dockerComposeFile": [
         "docker-compose.yml",
         ".generated/docker-compose.local.override.yml"
     ],
-    "service": "rmcs-develop",
+    "service": "jrmcs-develop",
     "workspaceFolder": "/workspaces/RMCS",
     "initializeCommand": "bash .devcontainer/scripts/generate-local-override.sh && bash .devcontainer/scripts/probe-host-tools.sh",
     "postCreateCommand": "bash .devcontainer/scripts/setup-shell-history.sh && bash .devcontainer/scripts/bootstrap-tools.sh",

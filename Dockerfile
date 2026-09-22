@@ -3,15 +3,15 @@
 
 
 
-# Sysroot source images for rmcs-develop-full.
+# Sysroot source images for jrmcs-develop-full.
 # CI overrides these with digest-pinned references. For local builds, build
-# rmcs-base for both architectures first and pass --build-arg explicitly;
+# jrmcs-base for both architectures first and pass --build-arg explicitly;
 # see docs/zh-cn/build_docker_image.md.
-ARG SYSROOT_IMAGE_AMD64=rmcs-base:latest
-ARG SYSROOT_IMAGE_ARM64=rmcs-base:latest
+ARG SYSROOT_IMAGE_AMD64=jrmcs-base:latest
+ARG SYSROOT_IMAGE_ARM64=jrmcs-base:latest
 
 # Base container, provides a runtime environment
-FROM ros:jazzy AS rmcs-base
+FROM ros:jazzy AS jrmcs-base
 ARG TARGETARCH
 
 # Change bash as default shell instead of sh
@@ -202,7 +202,7 @@ RUN export UNISON_VERSION=2.53.8 && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 # Developing container, works with devcontainer
-FROM rmcs-base AS rmcs-develop
+FROM jrmcs-base AS jrmcs-develop
 ARG TARGETARCH
 
 # Install develop tools
@@ -307,11 +307,11 @@ RUN sh -c "$(wget https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools
 COPY --chown=1000:1000 .script/template/env_setup.bash env_setup.bash
 COPY --chown=1000:1000 .script/template/env_setup.zsh env_setup.zsh
 
-FROM --platform=linux/amd64 ${SYSROOT_IMAGE_AMD64} AS rmcs-sysroot-amd64
-FROM --platform=linux/arm64 ${SYSROOT_IMAGE_ARM64} AS rmcs-sysroot-arm64
+FROM --platform=linux/amd64 ${SYSROOT_IMAGE_AMD64} AS jrmcs-sysroot-amd64
+FROM --platform=linux/arm64 ${SYSROOT_IMAGE_ARM64} AS jrmcs-sysroot-arm64
 
 # Developing container with cross toolchains and opposite-arch sysroot.
-FROM rmcs-develop AS rmcs-develop-full
+FROM jrmcs-develop AS jrmcs-develop-full
 ARG TARGETARCH
 
 USER root
@@ -337,8 +337,8 @@ RUN mkdir -p /opt/sysroots && \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac
 
-RUN --mount=from=rmcs-sysroot-amd64,target=/mnt/sysroot-amd64,readonly \
-    --mount=from=rmcs-sysroot-arm64,target=/mnt/sysroot-arm64,readonly \
+RUN --mount=from=jrmcs-sysroot-amd64,target=/mnt/sysroot-amd64,readonly \
+    --mount=from=jrmcs-sysroot-arm64,target=/mnt/sysroot-arm64,readonly \
     set -euo pipefail && \
     case "${TARGETARCH}" in \
         amd64) tar \
@@ -365,7 +365,7 @@ USER ubuntu
 
 
 # Runtime container, will automatically launch the main program
-FROM rmcs-base AS rmcs-runtime
+FROM jrmcs-base AS jrmcs-runtime
 
 # Install runtime tools
 RUN apt-get update && \
@@ -393,7 +393,7 @@ COPY --chown=root:root .script/template/set-hostname /usr/local/bin/set-hostname
 COPY --chown=root:root .script/template/entrypoint /entrypoint
 COPY --chown=root:root .script/template/rmcs-service /etc/init.d/rmcs
 
-COPY --from=rmcs-develop --chown=root:root /home/ubuntu/.ssh/id_rsa.pub /root/.ssh/authorized_keys
+COPY --from=jrmcs-develop --chown=root:root /home/ubuntu/.ssh/id_rsa.pub /root/.ssh/authorized_keys
 
 WORKDIR /root/
 COPY --chown=root:root .script/template/env_setup.bash env_setup.bash
