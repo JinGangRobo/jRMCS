@@ -1,0 +1,136 @@
+#include <algorithm>
+#include <limits>
+
+#include <eigen3/Eigen/Dense>
+#include <rclcpp/node.hpp>
+#include <rmcs_executor/component.hpp>
+#include <rmcs_msgs/chassis_mode.hpp>
+#include <rmcs_msgs/keyboard.hpp>
+#include <rmcs_msgs/mouse.hpp>
+#include <rmcs_msgs/switch.hpp>
+
+namespace rmcs_core::controller::chassis {
+
+class JChassisPowerController
+    : public rmcs_executor::Component
+    , public rclcpp::Node {
+public:
+    JChassisPowerController()
+        : Node(
+              get_component_name(),
+              rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)) {
+        register_input("/chassis/control_mode", mode_);
+
+        register_input("/remote/switch/right", switch_right_);
+        register_input("/remote/switch/left", switch_left_);
+        register_input("/remote/keyboard", keyboard_);
+        register_input("/remote/rotary_knob", rotary_knob_);
+
+        register_input("/chassis/power", chassis_power_);
+        register_input("/chassis/supercap/voltage", supercap_voltage_);
+        register_input("/chassis/supercap/enabled", supercap_enabled_);
+        register_input("/chassis/supercap/energy_percentage", supercap_energy_percentage_);
+
+        register_input("/referee/chassis/power_limit", chassis_power_limit_referee_);
+        register_input("/referee/chassis/buffer_energy", chassis_buffer_energy_referee_);
+        register_input("/chassis/boost", boost_mode_status_, false);
+
+        register_output("/chassis/control_power_limit", chassis_control_power_limit_, 0.0);
+    }
+
+    void update() override {
+        // update_ui();
+
+        using namespace rmcs_msgs;
+
+        auto switch_right = *switch_right_;
+        auto switch_left = *switch_left_;
+        auto keyboard = *keyboard_;
+        // auto rotary_knob = *rotary_knob_;
+
+        if ((switch_left == Switch::UNKNOWN || switch_right == Switch::UNKNOWN)
+            || (switch_left == Switch::DOWN && switch_right == Switch::DOWN)) {
+            reset_power_control();
+            return;
+        }
+
+        update_virtual_buffer_energy();
+
+        boost_mode_ = keyboard.shift || (boost_mode_status_.ready() && *boost_mode_status_);
+        update_control_power_limit();
+    }
+
+private:
+    void reset_power_control() {
+        virtual_buffer_energy_ = virtual_buffer_energy_limit_;
+        boost_mode_ = false;
+        *chassis_control_power_limit_ = 0.0;
+    }
+
+    void update_virtual_buffer_energy() {
+        constexpr double dt = 1e-3;
+        virtual_buffer_energy_ += dt * (chassis_power_limit_expected_ - *chassis_power_);
+        virtual_buffer_energy_ = std::clamp(
+            virtual_buffer_energy_, 0.0,
+            std::min(*chassis_buffer_energy_referee_, virtual_buffer_energy_limit_));
+    }
+
+    void update_control_power_limit() {
+        double power_limit;
+
+        if (boost_mode_ && *supercap_enabled_)
+            power_limit = *mode_ == rmcs_msgs::ChassisMode::LAUNCH_RAMP
+                            ? inf_
+                            : *chassis_power_limit_referee_ + 100.0;
+        else
+            power_limit = *chassis_power_limit_referee_;
+        chassis_power_limit_expected_ = power_limit;
+
+        power_limit = *chassis_power_limit_referee_
+                    + (power_limit - *chassis_power_limit_referee_)
+                          * std::clamp(*supercap_energy_percentage_ / 100.0, 0.0, 1.0);
+
+        // Maximum excess power when virtual buffer energy is full.
+        // due to shitty supercap, we have to set this to 0 to prevent energy leak.
+        constexpr double excess_power_limit = 0.0;
+        constexpr double anti_power_leak = 20.0;
+
+        power_limit = power_limit + excess_power_limit - anti_power_leak;
+        power_limit *= virtual_buffer_energy_ / virtual_buffer_energy_limit_;
+
+        *chassis_control_power_limit_ = power_limit;
+    }
+
+    static constexpr double inf_ = std::numeric_limits<double>::infinity();
+    static constexpr double nan_ = std::numeric_limits<double>::quiet_NaN();
+
+    InputInterface<rmcs_msgs::ChassisMode> mode_;
+
+    InputInterface<rmcs_msgs::Switch> switch_right_;
+    InputInterface<rmcs_msgs::Switch> switch_left_;
+    InputInterface<rmcs_msgs::Keyboard> keyboard_;
+    InputInterface<double> rotary_knob_;
+    InputInterface<bool> boost_mode_status_;
+
+    InputInterface<double> chassis_power_;
+    static constexpr double virtual_buffer_energy_limit_ = 30.0;
+    double virtual_buffer_energy_;
+
+    InputInterface<double> supercap_voltage_;
+    InputInterface<bool> supercap_enabled_;
+    InputInterface<double> supercap_energy_percentage_;
+
+    InputInterface<double> chassis_power_limit_referee_;
+    InputInterface<double> chassis_buffer_energy_referee_;
+
+    bool boost_mode_ = false;
+    double chassis_power_limit_expected_;
+    OutputInterface<double> chassis_control_power_limit_;
+};
+
+} // namespace rmcs_core::controller::chassis
+
+#include <pluginlib/class_list_macros.hpp>
+
+PLUGINLIB_EXPORT_CLASS(
+    rmcs_core::controller::chassis::JChassisPowerController, rmcs_executor::Component)
