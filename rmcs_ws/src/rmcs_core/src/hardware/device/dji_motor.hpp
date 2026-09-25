@@ -12,8 +12,11 @@
 #include <string>
 #include <utility>
 
+#include <rclcpp/logger.hpp>
+#include <rclcpp/logging.hpp>
 #include <rmcs_executor/component.hpp>
 #include <rmcs_utility/endian_promise.hpp>
+#include <rmcs_utility/tick_timer.hpp>
 
 #include "hardware/device/can_packet.hpp"
 
@@ -53,15 +56,19 @@ public:
     DjiMotor(
         rmcs_executor::Component& status_component, rmcs_executor::Component& command_component,
         const std::string& name_prefix)
-        : angle_(0.0)
+        : name_prefix_(name_prefix)
+        , angle_(0.0)
         , velocity_(0.0)
         , torque_(0.0) {
         status_component.register_output(name_prefix + "/angle", angle_output_, 0.0);
         status_component.register_output(name_prefix + "/velocity", velocity_output_, 0.0);
         status_component.register_output(name_prefix + "/torque", torque_output_, 0.0);
         status_component.register_output(name_prefix + "/max_torque", max_torque_output_, 0.0);
+        status_component.register_output(name_prefix + "/alive", alive_output_, false);
 
         command_component.register_input(name_prefix + "/control_torque", control_torque_, false);
+
+        alive_watchdog_.reset(50);
     }
 
     DjiMotor(
@@ -137,6 +144,9 @@ public:
         if (can_data.size() != 8) [[unlikely]]
             return;
         can_data_.store(CanPacket8{can_data}, std::memory_order_relaxed);
+
+        *alive_output_ = true;
+        alive_watchdog_.reset(50);
     }
 
     static constexpr auto recv_id(Type type, std::uint8_t index) -> std::uint32_t {
@@ -203,6 +213,12 @@ public:
         // Torque unit: N*m
         torque_ = raw_current_to_torque_coefficient_ * static_cast<double>(feedback.current);
 
+        if (alive_watchdog_.tick()) {
+            *alive_output_ = false;
+            RCLCPP_WARN(
+                rclcpp::get_logger("HW_Diag"), "Dji motor %s offline!", name_prefix_.c_str());
+        }
+
         *angle_output_ = angle();
         *velocity_output_ = velocity();
         *torque_output_ = torque();
@@ -254,7 +270,9 @@ private:
 
     Type type_ = Type::kM3508;
     std::uint8_t id_ = 0;
+    std::string name_prefix_;
     std::atomic<CanPacket8> can_data_;
+    rmcs_utility::TickTimer alive_watchdog_;
 
     static constexpr int kRawAngleMax = 8192;
     int encoder_zero_point_, last_raw_angle_;
@@ -276,6 +294,7 @@ private:
     rmcs_executor::Component::OutputInterface<double> velocity_output_;
     rmcs_executor::Component::OutputInterface<double> torque_output_;
     rmcs_executor::Component::OutputInterface<double> max_torque_output_;
+    rmcs_executor::Component::OutputInterface<bool> alive_output_;
 
     rmcs_executor::Component::InputInterface<double> control_torque_;
 };
