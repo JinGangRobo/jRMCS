@@ -49,6 +49,9 @@ public:
         }
     }
 
+    double integral() const { return err_integral_; }
+    void clear_integral() { err_integral_ = 0; }
+
     double kp, ki, kd;
     double integral_min = -inf, integral_max = inf;
     double integral_split_min = -inf, integral_split_max = inf;
