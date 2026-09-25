@@ -47,6 +47,7 @@ public:
         register_output("/chassis/control_angle", chassis_control_angle_, kNaN);
         register_output("/chassis/control_mode", mode_, rmcs_msgs::ChassisMode::ALIGNMENT);
         register_output("/chassis/control_velocity", chassis_control_velocity_);
+        register_output("/chassis/is_spinning_forward", is_spinning_forward_, false);
     }
 
     void before_updating() override {
@@ -133,6 +134,7 @@ public:
 
                 update_spin_stuck_watchdog(mode);
                 *mode_ = mode;
+                *is_spinning_forward_ = spinning_forward_;
             }
 
             update_velocity_control();
@@ -359,6 +361,7 @@ private:
     InputInterface<rmcs_msgs::ChassisMode> navigation_chassis_behavior_;
 
     OutputInterface<rmcs_msgs::ChassisMode> mode_;
+    OutputInterface<bool> is_spinning_forward_;
     bool spinning_forward_ = true;
 
     std::size_t spin_stuck_count_ = 0;
