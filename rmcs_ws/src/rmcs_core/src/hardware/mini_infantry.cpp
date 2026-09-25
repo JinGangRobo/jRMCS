@@ -22,7 +22,8 @@
 #include <std_msgs/msg/int32.hpp>
 
 #include "filter/low_pass_filter.hpp"
-#include "hardware/device/bmi088.hpp"
+#include "hardware/device/bmi088_ekf.hpp"
+#include "hardware/device/board_clock_lifter.hpp"
 #include "hardware/device/can_packet.hpp"
 #include "hardware/device/dji_motor.hpp"
 #include "hardware/device/dr16.hpp"
@@ -98,7 +99,6 @@ private:
             MiniInfantry& mini_infantry, MiniInfantryCommand& mini_infantry_command,
             std::string_view board_serial = {})
             : tf_(mini_infantry.tf_)
-            , imu_(10.0f, 0.001f, 1000000.0f)
             , dr16_{}
             , imu_bias_x(static_cast<int16_t>(mini_infantry.get_parameter("imu_bias_x").as_int()))
             , imu_bias_y(static_cast<int16_t>(mini_infantry.get_parameter("imu_bias_y").as_int()))
@@ -122,12 +122,6 @@ private:
                 device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 2}.set_reduction_ratio(
                     1.));
 
-            imu_.set_coordinate_mapping([](double x, double y, double z) {
-                // The rotation angle must be an exact multiple of 90 degrees, otherwise use a
-                // matrix. See the upstream mini-infantry implementation for the derivation.
-                return std::make_tuple(x, y, z);
-            });
-
             mini_infantry.register_output("/gimbal/yaw/velocity_imu", gimbal_yaw_velocity_imu_);
             mini_infantry.register_output("/gimbal/pitch/velocity_imu", gimbal_pitch_velocity_imu_);
             mini_infantry.register_output("/debug/pitch/raw_angle", debug_pitch_raw_angle_);
@@ -138,19 +132,23 @@ private:
         ~TopBoard() final = default;
 
         void update() {
-            imu_.update_status();
-            Eigen::Quaterniond gimbal_imu_pose{imu_.q0(), imu_.q1(), imu_.q2(), imu_.q3()};
+            const auto snapshot = imu_.snapshot();
 
-            tf_->set_transform<rmcs_description::PitchLink, rmcs_description::OdomImu>(
-                gimbal_imu_pose.conjugate());
-            tf_->set_transform<rmcs_description::BaseLink, rmcs_description::RawImu>(
-                gimbal_imu_pose);
+            if (snapshot) {
+                tf_->set_transform<rmcs_description::PitchLink, rmcs_description::OdomImu>(
+                    snapshot->orientation.conjugate());
+                tf_->set_transform<rmcs_description::BaseLink, rmcs_description::RawImu>(
+                    snapshot->orientation);
+            }
             fast_tf::rcl::broadcast_all(*tf_);
 
             dr16_.update_status();
 
-            *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(imu_.gz());
-            *gimbal_pitch_velocity_imu_ = imu_gy_velocity_filter_.update(imu_.gy());
+            if (snapshot) {
+                *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
+                *gimbal_pitch_velocity_imu_ =
+                    imu_gy_velocity_filter_.update(snapshot->gyro_body.y());
+            }
 
             *debug_pitch_raw_angle_ = gimbal_pitch_motor_.last_raw_angle();
 
@@ -202,17 +200,22 @@ private:
         }
 
         void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-            imu_.store_accelerometer_status(data.x, data.y, data.z);
+            const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
+            imu_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
         }
 
         void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-            imu_.store_gyroscope_status(
-                data.x - imu_bias_x, data.y - imu_bias_y, data.z - imu_bias_z);
+            const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
+            if (!timestamp.has_value())
+                return;
+            imu_.try_update_with_gyroscope_sample(
+                data.x - imu_bias_x, data.y - imu_bias_y, data.z - imu_bias_z, *timestamp);
         }
 
         OutputInterface<rmcs_description::Tf>& tf_;
 
-        device::Bmi088 imu_;
+        device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{}};
+        device::BoardClockLifter board_clock_lifter_;
         device::Dr16 dr16_;
 
         int16_t imu_bias_x = 0, imu_bias_y = 0, imu_bias_z = 0;
@@ -237,8 +240,7 @@ private:
         explicit BottomBoard(
             MiniInfantry& mini_infantry, MiniInfantryCommand& mini_infantry_command,
             std::string_view board_serial = {})
-            : imu_(10.0f, 0.001f, 1000000.0f)
-            , tf_(mini_infantry.tf_)
+            : tf_(mini_infantry.tf_)
             , gimbal_yaw_motor_(mini_infantry, mini_infantry_command, "/gimbal/yaw")
             , gimbal_bullet_feeder_(mini_infantry, mini_infantry_command, "/gimbal/bullet_feeder")
             , chassis_wheel_motors_(
@@ -293,9 +295,9 @@ private:
         ~BottomBoard() final = default;
 
         void update() {
-            imu_.update_status();
-
-            *chassis_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(imu_.gz());
+            if (const auto snapshot = imu_.snapshot())
+                *chassis_yaw_velocity_imu_ =
+                    imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
             *debug_yaw_raw_angle_ = gimbal_yaw_motor_.last_raw_angle();
 
             gimbal_yaw_motor_.update_status();
@@ -368,14 +370,19 @@ private:
         }
 
         void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-            imu_.store_accelerometer_status(data.x, data.y, data.z);
+            const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
+            imu_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
         }
 
         void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-            imu_.store_gyroscope_status(data.x, data.y, data.z);
+            const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
+            if (!timestamp.has_value())
+                return;
+            imu_.try_update_with_gyroscope_sample(data.x, data.y, data.z, *timestamp);
         }
 
-        device::Bmi088 imu_;
+        device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{}};
+        device::BoardClockLifter board_clock_lifter_;
         OutputInterface<rmcs_description::Tf>& tf_;
 
         filter::LowPassFilter<> imu_gz_velocity_filter_{60.0f, 1000.0f};

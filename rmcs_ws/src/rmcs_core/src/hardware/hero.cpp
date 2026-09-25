@@ -22,7 +22,8 @@
 #include <std_msgs/msg/int32.hpp>
 
 #include "filter/low_pass_filter.hpp"
-#include "hardware/device/bmi088.hpp"
+#include "hardware/device/bmi088_ekf.hpp"
+#include "hardware/device/board_clock_lifter.hpp"
 #include "hardware/device/can_packet.hpp"
 #include "hardware/device/dji_motor.hpp"
 #include "hardware/device/dm_motor.hpp"
@@ -98,7 +99,6 @@ private:
         friend class Hero;
         explicit TopBoard(Hero& hero, HeroCommand& hero_command, std::string_view board_serial = {})
             : tf_(hero.tf_)
-            , imu_(10.0f, 0.001f, 1000000.0f)
             , dr16_{}
             , imu_bias_x(static_cast<int16_t>(hero.get_parameter("imu_bias_x").as_int()))
             , imu_bias_y(static_cast<int16_t>(hero.get_parameter("imu_bias_y").as_int()))
@@ -122,12 +122,6 @@ private:
                        .set_reduction_ratio(1.)
                        .set_reversed()}) {
 
-            imu_.set_coordinate_mapping([](double x, double y, double z) {
-                // The rotation angle must be an exact multiple of 90 degrees, otherwise use a
-                // matrix. See the upstream hero implementation for the derivation.
-                return std::make_tuple(-y, x, z);
-            });
-
             hero.register_output("/gimbal/yaw/velocity_imu", gimbal_yaw_velocity_imu_);
             hero.register_output("/gimbal/pitch/velocity_imu", gimbal_pitch_velocity_imu_);
 
@@ -140,19 +134,23 @@ private:
         ~TopBoard() final = default;
 
         void update() {
-            imu_.update_status();
-            Eigen::Quaterniond gimbal_imu_pose{imu_.q0(), imu_.q1(), imu_.q2(), imu_.q3()};
+            const auto snapshot = imu_.snapshot();
 
-            tf_->set_transform<rmcs_description::PitchLink, rmcs_description::OdomImu>(
-                gimbal_imu_pose.conjugate());
-            tf_->set_transform<rmcs_description::BaseLink, rmcs_description::RawImu>(
-                gimbal_imu_pose);
+            if (snapshot) {
+                tf_->set_transform<rmcs_description::PitchLink, rmcs_description::OdomImu>(
+                    snapshot->orientation.conjugate());
+                tf_->set_transform<rmcs_description::BaseLink, rmcs_description::RawImu>(
+                    snapshot->orientation);
+            }
             fast_tf::rcl::broadcast_all(*tf_);
 
             dr16_.update_status();
 
-            *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(imu_.gz());
-            *gimbal_pitch_velocity_imu_ = imu_gy_velocity_filter_.update(imu_.gy());
+            if (snapshot) {
+                *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
+                *gimbal_pitch_velocity_imu_ =
+                    imu_gy_velocity_filter_.update(snapshot->gyro_body.y());
+            }
 
             *debug_pitch_raw_angle_ = gimbal_pitch_motor_.last_raw_angle();
             gimbal_pitch_motor_.update_status();
@@ -204,17 +202,25 @@ private:
         }
 
         void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-            imu_.store_accelerometer_status(data.x, data.y, data.z);
+            const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
+            imu_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
         }
 
         void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-            imu_.store_gyroscope_status(
-                data.x - imu_bias_x, data.y - imu_bias_y, data.z - imu_bias_z);
+            const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
+            if (!timestamp.has_value())
+                return;
+            imu_.try_update_with_gyroscope_sample(
+                data.x - imu_bias_x, data.y - imu_bias_y, data.z - imu_bias_z, *timestamp);
         }
 
         OutputInterface<rmcs_description::Tf>& tf_;
 
-        device::Bmi088 imu_;
+        // The reATRM hero maps the sensor frame with (-y, x, z); the EKF takes the transposed
+        // matrix as its body-to-sensor rotation.
+        device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{
+            .body_to_sensor = (Eigen::Matrix3d{} << 0, 1, 0, -1, 0, 0, 0, 0, 1).finished()}};
+        device::BoardClockLifter board_clock_lifter_;
         device::Dr16 dr16_;
 
         OutputInterface<double> gimbal_yaw_velocity_imu_;
@@ -239,8 +245,7 @@ private:
         friend class Hero;
         explicit BottomBoard(
             Hero& hero, HeroCommand& hero_command, std::string_view board_serial = {})
-            : imu_(10.0f, 0.001f, 1000000.0f)
-            , tf_(hero.tf_)
+            : tf_(hero.tf_)
             , chassis_wheel_motors_(
                   {hero, hero_command, "/chassis/left_front_wheel",
                    device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 1}},
@@ -259,12 +264,6 @@ private:
                   hero, hero_command, "/gimbal/bullet_feeder",
                   device::DmMotor::Config{device::DmMotor::Type::kJ4310}
                       .enable_multi_turn_angle()) {
-
-            imu_.set_coordinate_mapping([](double x, double y, double z) {
-                // The rotation angle must be an exact multiple of 90 degrees, otherwise use a
-                // matrix. See the upstream hero implementation for the derivation.
-                return std::make_tuple(x, z, y);
-            });
 
             hero.register_output("/referee/serial", referee_serial_);
             referee_serial_->read = [this](std::byte* buffer, size_t size) {
@@ -286,10 +285,11 @@ private:
         ~BottomBoard() final = default;
 
         void update() {
-            imu_.update_status();
-            gimbal_yaw_motor_.update_status();
-            *chassis_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(imu_.gz());
+            if (const auto snapshot = imu_.snapshot())
+                *chassis_yaw_velocity_imu_ =
+                    imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
 
+            gimbal_yaw_motor_.update_status();
             tf_->set_state<rmcs_description::GimbalCenterLink, rmcs_description::YawLink>(
                 gimbal_yaw_motor_.angle());
 
@@ -347,14 +347,22 @@ private:
         }
 
         void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-            imu_.store_accelerometer_status(data.x, data.y, data.z);
+            const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
+            imu_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
         }
 
         void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-            imu_.store_gyroscope_status(data.x, data.y, data.z);
+            const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
+            if (!timestamp.has_value())
+                return;
+            imu_.try_update_with_gyroscope_sample(data.x, data.y, data.z, *timestamp);
         }
 
-        device::Bmi088 imu_;
+        // The reATRM hero bottom board maps the sensor frame with (x, z, y); the EKF takes the
+        // transposed matrix as its body-to-sensor rotation.
+        device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{
+            .body_to_sensor = (Eigen::Matrix3d{} << 1, 0, 0, 0, 0, 1, 0, 1, 0).finished()}};
+        device::BoardClockLifter board_clock_lifter_;
         OutputInterface<rmcs_description::Tf>& tf_;
 
         OutputInterface<double> chassis_yaw_velocity_imu_;
