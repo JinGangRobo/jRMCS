@@ -358,6 +358,32 @@ RUN --mount=from=jrmcs-sysroot-amd64,target=/mnt/sysroot-amd64,readonly \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac
 
+# Normalize the imported sysroot. Package postinst scripts (via update-alternatives,
+# e.g. liblapack3/libblas3) create ABSOLUTE symlinks such as
+#   usr/lib/aarch64-linux-gnu/liblapack.so.3 -> /etc/alternatives/...
+# Absolute targets are resolved against the *host* root, not against --sysroot, so
+# they dangle when cross-linking from the opposite architecture (ld: liblapack.so.3
+# ... not found). Rewrite every absolute symlink as a relative one so that it
+# resolves inside the sysroot.
+RUN set -euo pipefail && \
+    case "${TARGETARCH}" in \
+        amd64) sysroot=/opt/sysroots/arm64 ;; \
+        arm64) sysroot=/opt/sysroots/amd64 ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    find "$sysroot" -type l -print0 | while IFS= read -r -d '' link; do \
+        target="$(readlink "$link")"; \
+        case "$target" in /*) ;; *) continue ;; esac; \
+        rel="$(realpath -m --relative-to="$(dirname "$link")" "$sysroot$target")"; \
+        ln -sfn "$rel" "$link"; \
+    done && \
+    if [ -n "$(find "$sysroot" -type l -lname '/*' -print -quit)" ]; then \
+        echo "Error: absolute symlinks remain under $sysroot:" >&2; \
+        find "$sysroot" -type l -lname '/*' >&2; \
+        exit 1; \
+    fi && \
+    echo "Normalized absolute symlinks under $sysroot"
+
 WORKDIR /home/ubuntu
 ENV USER=ubuntu
 ENV WORKDIR=/home/ubuntu
