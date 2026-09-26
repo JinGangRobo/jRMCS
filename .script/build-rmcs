@@ -58,8 +58,3 @@ cmake_args=(
 
 CLICOLOR_FORCE=1 NINJA_STATUS="" \
     colcon build "${colcon_args[@]}" "$@" --cmake-args "${cmake_args[@]}"
-
-if [[ -f "${RMCS_PATH}/rmcs_ws/compile_commands.json" ]]; then
-    rm "${RMCS_PATH}/rmcs_ws/compile_commands.json"
-fi
-ln -s ${RMCS_PATH}/rmcs_ws/build/compile_commands.json ${RMCS_PATH}/rmcs_ws/compile_commands.json
