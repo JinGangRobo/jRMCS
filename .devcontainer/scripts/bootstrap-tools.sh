@@ -57,9 +57,37 @@ install_tool() {
     fi
 }
 
+resolve_opencode_package() {
+    local version=""
+    local manifest_line=""
+
+    if [ ! -f "$manifest_path" ]; then
+        printf 'opencode-ai'
+        return 0
+    fi
+
+    manifest_line=$(grep -m 1 -E '^opencode=' "$manifest_path" 2>/dev/null || true)
+    if [ -z "$manifest_line" ]; then
+        printf 'opencode-ai'
+        return 0
+    fi
+
+    version=${manifest_line#*=}
+    version=${version#v}
+
+    local major=""
+    major=$(printf '%s' "$version" | cut -d. -f1)
+
+    if [ -n "$major" ] && [ "$major" -ge 2 ] 2>/dev/null; then
+        printf '@opencode/cli'
+    else
+        printf 'opencode-ai'
+    fi
+}
+
 install_tool "codex" "@openai/codex"
 install_tool "claude" "@anthropic-ai/claude-code"
-install_tool "opencode" "opencode-ai"
+install_tool "opencode" "$(resolve_opencode_package)"
 install_tool "lark-cli" "@larksuite/cli"
 
 printf 'Bootstrap summary:\n'
