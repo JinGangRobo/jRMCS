@@ -38,9 +38,9 @@ public:
         register_output("/gimbal/yaw/control_angle_error", yaw_angle_error_, nan_);
         register_output("/gimbal/pitch/control_angle_error", pitch_angle_error_, nan_);
 
-        two_axis_gimbal_solver.enable_yaw_limit(
-            *this, get_parameter("yaw_upper_limit").as_double(),
-            get_parameter("yaw_lower_limit").as_double());
+        // two_axis_gimbal_solver.enable_yaw_limit(
+        //     *this, get_parameter("yaw_upper_limit").as_double(),
+        //     get_parameter("yaw_lower_limit").as_double());
     }
 
     void update() override {
