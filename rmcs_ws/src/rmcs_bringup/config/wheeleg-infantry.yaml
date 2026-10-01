@@ -27,7 +27,7 @@ rmcs_executor:
       # - rmcs_core::controller::chassis::JChassisPowerController -> chassis_power_controller
       # - rmcs_core::controller::chassis::JOmniWheelController -> omni_wheel_controller
 
-      # - rmcs::AutoAimComponent -> auto_aim_component
+      - rmcs::AutoAimComponent -> auto_aim_component
 
       - rmcs_core::controller::diagnosis::Diagnosis -> diagnosis
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
@@ -49,7 +49,14 @@ value_broadcaster:
       # - /referee/shooter/initial_speed
       # - /referee/chassis/current_hp
       - /remote/rotary_knob
+      - /chassis/left_front_hip/angle     # lf0
+      - /chassis/left_back_hip/angle      # l20
+      - /chassis/left_wheel/angle
+      - /chassis/right_front_hip/angle    # rf0
+      - /chassis/right_back_hip/angle     # r20
+      - /chassis/right_wheel/angle
 
+      
 wheelleg_infantry_hardware:
   ros__parameters:
     board_serial_top_board: "D4-472C-34F2-DED6-8EBD-34D6-2DDE"
@@ -59,15 +66,46 @@ wheelleg_infantry_hardware:
 
 
     left_front_hip_motors_zero_point: 28225
-    left_back_hip_motors_zero_point: 29176
-    # left_front_hip_motors_zero_point: 7685
-    # left_back_hip_motors_zero_point: 8566
+    # left_back_hip_motors_zero_point: 29176
+    left_back_hip_motors_zero_point: 27023
     right_front_hip_motors_zero_point: 34163
-    right_back_hip_motors_zero_point: 30358
+    # right_back_hip_motors_zero_point: 30358
+    right_back_hip_motors_zero_point: 32511
   
     imu_bias_x: 1
     imu_bias_y: 3
     imu_bias_z: 3
+
+auto_aim_component:
+  ros__parameters:
+    # WARN: 危险！可选 red | blue，生效后裁判系统 ID 缺席时
+    # 将强行绑定为对应阵营哨兵，仅供调试，严禁比赛启用。
+    # 留空或填 unknow 表示禁用。
+    dangerous_fallback: ""
+    manual_shoot: false
+    enable_rune: false
+    camera_translation: [0.25, 0.0, -0.05]
+    fire_control:
+      bullet_speed: 11.5
+      shoot_delay: 0.1
+      offset_yaw: 0.0
+      offset_pitch: 0.0
+      attack_window: 120.0
+      degraded_angle_speed: 12.0
+      window_redundancy: 0.8
+      window_hysteresis: 0.2
+      attack_preaim: false
+      require_stable_command: false
+      yaw_tolerance: 0.07
+      pitch_tolerance: 0.04
+      rune_idle_duration: 0.4
+      rune_shoot_duration: 0.2
+
+auto_aim_ui:
+  ros__parameters:
+    offset_x: 0.0
+    offset_y: 0.0
+    offset_z: 0.0
 
 gimbal_controller:
   ros__parameters:

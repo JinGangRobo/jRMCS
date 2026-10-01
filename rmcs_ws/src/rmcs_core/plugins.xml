@@ -3,6 +3,7 @@
   <class type="rmcs_core::hardware::DualSentry" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::Hero" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::MiniInfantry" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::hardware::WheelLegInfantry" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::hardware::Px4VisionBridge" base_class_type="rmcs_executor::Component" />
 
