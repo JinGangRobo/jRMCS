@@ -1,0 +1,6 @@
+#compdef sync-remote
+
+_arguments \
+  '--target-arch=[Override the configured target architecture]:target:(arm64 amd64)' \
+  '--with-build[Also sync the build directory to the remote /rmcs_build]' \
+  '(-h --help)'{-h,--help}'[Show help]'

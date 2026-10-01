@@ -215,6 +215,18 @@ sync-remote
 
 > Tip: 由于 `build-rmcs` 采用 `symlink-install` 方式构建，因此对于配置文件和 .py 文件，直接修改其源文件，无需编译即可触发同步。
 
+默认只同步 `install`（交叉编译时为 `install-cross-<arch>`）到部署容器的 `/rmcs_install`，通常这就足够了：
+`symlink-install` 产生的软链接会被 unison 解引用并复制为实体文件，因此无需同步 build 目录。
+
+如需额外把 build 目录同步到部署容器的 `/rmcs_build`（例如在远端调试对象文件、
+`compile_commands.json` 等特殊场景），可以执行：
+
+```bash
+sync-remote --with-build
+```
+
+使用 `sync-remote --help` 可查看全部参数。
+
 ### Step 5：重启服务
 
 RMCS 在部署容器中以服务方式启动 (`/etc/init.d/rmcs`)。

@@ -385,7 +385,7 @@ RUN sh -c "$(wget https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools
     echo 'export PATH=${PATH}:/rmcs_install/lib/rmcs_cli' >> ~/.zshrc && \
     chsh -s /bin/zsh root
 
-RUN mkdir -p /rmcs_install/
+RUN mkdir -p /rmcs_install/ /rmcs_build/
 
 COPY --chown=root:root .script/set-robot /usr/local/bin/set-robot
 COPY --chown=root:root .script/template/set-hostname /usr/local/bin/set-hostname
