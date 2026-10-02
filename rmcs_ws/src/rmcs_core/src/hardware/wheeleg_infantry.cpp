@@ -49,6 +49,11 @@ public:
         using namespace rmcs_description;
 
         register_output("/tf", tf_);
+        // 整车底盘(浮动基座)IMU: 由下板 IMU 提供, 供 RL 观测 / 底盘控制器使用。
+        register_output(
+            "/wheel_leg/imu/quaternion", imu_quaternion_, Eigen::Quaterniond::Identity());
+        register_output(
+            "/wheel_leg/imu/angular_velocity", imu_angular_velocity_, Eigen::Vector3d::Zero());
         tf_->set_transform<PitchLink, CameraLink>(Eigen::Translation3d{-0.052, 0.0, 0.084});
         tf_->set_transform<PitchLink, MuzzleLink>(Eigen::Translation3d{0.0, 0.0, 0.0});
 
@@ -66,7 +71,7 @@ public:
     ~WheelLegInfantry() override = default;
 
     void update() override {
-        
+
         top_board_->update();
         bottom_board_->update();
         remote_control_->update();
@@ -105,7 +110,8 @@ private:
         explicit TopBoard(
             WheelLegInfantry& wheeleg_infantry, WheelLegInfantryCommand& wheeleg_infantry_command,
             std::string_view board_serial = {})
-            : tf_(wheeleg_infantry.tf_)
+            : wheeleg_infantry_(wheeleg_infantry)
+            , tf_(wheeleg_infantry.tf_)
             , dr16_{}
             , imu_bias_x(
                   static_cast<int16_t>(wheeleg_infantry.get_parameter("imu_bias_x").as_int()))
@@ -125,12 +131,12 @@ private:
                         wheeleg_infantry.get_parameter("pitch_motor_zero_point").as_int())));
 
             gimbal_left_friction_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 1}
-                    .set_reduction_ratio(1.)
-                    );
+                device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 1}.set_reduction_ratio(
+                    1.));
             gimbal_right_friction_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 2}.set_reduction_ratio(
-                    1.).set_reversed());
+                device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 2}
+                    .set_reduction_ratio(1.)
+                    .set_reversed());
 
             wheeleg_infantry.register_output("/gimbal/yaw/velocity_imu", gimbal_yaw_velocity_imu_);
             wheeleg_infantry.register_output(
@@ -157,6 +163,7 @@ private:
             dr16_.update_status();
 
             if (snapshot) {
+                // 上板 IMU 装在云台上: 只供云台 yaw/pitch 稳定, 不作为整车底盘姿态。
                 *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
                 *gimbal_pitch_velocity_imu_ =
                     imu_gy_velocity_filter_.update(snapshot->gyro_body.y());
@@ -230,6 +237,7 @@ private:
                 data.x - imu_bias_x, data.y - imu_bias_y, data.z - imu_bias_z, *timestamp);
         }
 
+        WheelLegInfantry& wheeleg_infantry_;
         OutputInterface<rmcs_description::Tf>& tf_;
 
         device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{}};
@@ -258,22 +266,26 @@ private:
         explicit BottomBoard(
             WheelLegInfantry& wheeleg_infantry, WheelLegInfantryCommand& wheeleg_infantry_command,
             std::string_view board_serial = {})
-            : tf_(wheeleg_infantry.tf_)
+            : wheeleg_infantry_(wheeleg_infantry)
+            , tf_(wheeleg_infantry.tf_)
             , gimbal_yaw_motor_(wheeleg_infantry, wheeleg_infantry_command, "/gimbal/yaw")
             , gimbal_bullet_feeder_(
                   wheeleg_infantry, wheeleg_infantry_command, "/gimbal/bullet_feeder")
             , chassis_wheel_motors_(
                   {wheeleg_infantry, wheeleg_infantry_command, "/chassis/left_wheel",
-                   device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 1}.set_reduction_ratio(
-                       268.0 / 17.0).set_reversed().enable_multi_turn_angle()},
+                   device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 1}
+                       .set_reduction_ratio(268.0 / 17.0)
+                       .set_reversed()
+                       .enable_multi_turn_angle()},
                   {wheeleg_infantry, wheeleg_infantry_command, "/chassis/right_wheel",
                    device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 2}
                        .set_reduction_ratio(268.0 / 17.0)
-                       .set_reversed().enable_multi_turn_angle()})
+                       .set_reversed()
+                       .enable_multi_turn_angle()})
             , left_front_hip_motors_(
                   wheeleg_infantry, wheeleg_infantry_command, "/chassis/left_front_hip",
                   device::DmMotor::Config{device::DmMotor::Type::kJ4310}
-          
+                      .enable_multi_turn_angle()
                       .set_encoder_zero_point(
                           static_cast<int>(
                               wheeleg_infantry.get_parameter("left_front_hip_motors_zero_point")
@@ -281,7 +293,7 @@ private:
             , left_back_hip_motors_(
                   wheeleg_infantry, wheeleg_infantry_command, "/chassis/left_back_hip",
                   device::DmMotor::Config{device::DmMotor::Type::kJ4310}
-            
+                      .enable_multi_turn_angle()
                       .set_encoder_zero_point(
                           static_cast<int>(
                               wheeleg_infantry.get_parameter("left_back_hip_motors_zero_point")
@@ -289,7 +301,7 @@ private:
             , right_front_hip_motors_(
                   wheeleg_infantry, wheeleg_infantry_command, "/chassis/right_front_hip",
                   device::DmMotor::Config{device::DmMotor::Type::kJ4310}
-
+                      .enable_multi_turn_angle()
                       .set_encoder_zero_point(
                           static_cast<int>(
                               wheeleg_infantry.get_parameter("right_front_hip_motors_zero_point")
@@ -297,7 +309,7 @@ private:
             , right_back_hip_motors_(
                   wheeleg_infantry, wheeleg_infantry_command, "/chassis/right_back_hip",
                   device::DmMotor::Config{device::DmMotor::Type::kJ4310}
-
+                      .enable_multi_turn_angle()
                       .set_encoder_zero_point(
                           static_cast<int>(
                               wheeleg_infantry.get_parameter("right_back_hip_motors_zero_point")
@@ -335,9 +347,13 @@ private:
         ~BottomBoard() final = default;
 
         void update() {
-            if (const auto snapshot = imu_.snapshot())
+            if (const auto snapshot = imu_.snapshot()) {
                 *chassis_yaw_velocity_imu_ =
                     imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
+                // 下板 IMU 装在底盘上: 作为整车底盘(浮动基座)姿态, 供 RL 观测使用。
+                *wheeleg_infantry_.imu_quaternion_ = snapshot->orientation;
+                *wheeleg_infantry_.imu_angular_velocity_ = snapshot->gyro_body;
+            }
             *debug_yaw_raw_angle_ = gimbal_yaw_motor_.last_raw_angle();
 
             gimbal_yaw_motor_.update_status();
@@ -345,8 +361,6 @@ private:
             left_back_hip_motors_.update_status();
             right_front_hip_motors_.update_status();
             right_back_hip_motors_.update_status();
-
-
 
             tf_->set_state<rmcs_description::GimbalCenterLink, rmcs_description::YawLink>(
                 gimbal_yaw_motor_.angle());
@@ -458,6 +472,7 @@ private:
 
         device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{}};
         device::BoardClockLifter board_clock_lifter_;
+        WheelLegInfantry& wheeleg_infantry_;
         OutputInterface<rmcs_description::Tf>& tf_;
 
         filter::LowPassFilter<> imu_gz_velocity_filter_{60.0f, 1000.0f};
@@ -484,6 +499,9 @@ private:
     OutputInterface<rmcs_description::Tf> tf_;
 
     rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr gimbal_calibrate_subscription_;
+
+    OutputInterface<Eigen::Quaterniond> imu_quaternion_;
+    OutputInterface<Eigen::Vector3d> imu_angular_velocity_;
 
     std::unique_ptr<TopBoard> top_board_;
     std::unique_ptr<BottomBoard> bottom_board_;
