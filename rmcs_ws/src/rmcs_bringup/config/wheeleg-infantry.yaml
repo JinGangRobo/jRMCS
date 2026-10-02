@@ -10,11 +10,11 @@ rmcs_executor:
       - rmcs_core::referee::command::Interaction -> referee_interaction
       - rmcs_core::referee::command::interaction::Ui -> referee_ui
 
-      - rmcs_core::controller::gimbal::SimpleGimbalController -> gimbal_controller
-      - rmcs_core::controller::pid::ErrorPidController -> yaw_angle_pid_controller
-      - rmcs_core::controller::pid::PidController -> yaw_velocity_pid_controller
-      - rmcs_core::controller::pid::ErrorPidController -> pitch_angle_pid_controller
-      - rmcs_core::controller::pid::PidController -> pitch_velocity_pid_controller
+      # - rmcs_core::controller::gimbal::SimpleGimbalController -> gimbal_controller
+      # - rmcs_core::controller::pid::ErrorPidController -> yaw_angle_pid_controller
+      # - rmcs_core::controller::pid::PidController -> yaw_velocity_pid_controller
+      # - rmcs_core::controller::pid::ErrorPidController -> pitch_angle_pid_controller
+      # - rmcs_core::controller::pid::PidController -> pitch_velocity_pid_controller
 
       - rmcs_core::controller::shooting::FrictionWheelController -> friction_wheel_controller
       - rmcs_core::controller::shooting::HeatController -> heat_controller
@@ -28,6 +28,15 @@ rmcs_executor:
       # - rmcs_core::controller::chassis::JOmniWheelController -> omni_wheel_controller
 
       - rmcs::AutoAimComponent -> auto_aim_component
+
+      # RL 轮腿链：遥控 -> 底盘控制器(命令/使能) -> 桥 -> 自定义控制器(力矩级 force_map) -> 4 髋 DM + 2 轮 M3508
+      - rmcs_core::controller::chassis::WheelLegChassisController -> wheel_leg_chassis_controller
+      - rmcs_core::controller::chassis::WheelLegRlImu -> wheel_leg_rl_imu
+      - rmcs_core::controller::chassis::WheelLegRlJointState -> wheel_leg_rl_joint_state
+      - rmcs_core::controller::chassis::WheelLegRlController -> wheel_leg_rl_controller
+      - rmcs_core::controller::chassis::WheelLegImuBroadcaster -> wheel_leg_imu_broadcaster
+      - rmcs_rl::RlBridge -> rl_bridge
+      - rmcs_rl::PolicyServerLauncher -> policy_server_launcher
 
       - rmcs_core::controller::diagnosis::Diagnosis -> diagnosis
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
@@ -48,13 +57,8 @@ value_broadcaster:
       # - /gimbal/yaw/control_torque
       # - /referee/shooter/initial_speed
       # - /referee/chassis/current_hp
-      - /remote/rotary_knob
-      - /chassis/left_front_hip/angle     # lf0
-      - /chassis/left_back_hip/angle      # l20
-      - /chassis/left_wheel/angle
-      - /chassis/right_front_hip/angle    # rf0
-      - /chassis/right_back_hip/angle     # r20
-      - /chassis/right_wheel/angle
+      # - /remote/rotary_knob
+
 
       
 wheelleg_infantry_hardware:
@@ -67,10 +71,10 @@ wheelleg_infantry_hardware:
 
     left_front_hip_motors_zero_point: 28225
     # left_back_hip_motors_zero_point: 29176
-    left_back_hip_motors_zero_point: 27023
+    left_back_hip_motors_zero_point: 27323
     right_front_hip_motors_zero_point: 34163
     # right_back_hip_motors_zero_point: 30358
-    right_back_hip_motors_zero_point: 32511
+    right_back_hip_motors_zero_point: 32211
   
     imu_bias_x: 1
     imu_bias_y: 3
@@ -236,3 +240,135 @@ diagnosis:
 
     enable_motor_check: true
     enable_supercap_check: true
+
+# ===================== RL 轮腿（自定义力矩级链） =====================
+# 观测契约已盖章进 models/test25000v2.onnx；布局=25 维单帧 × history 5 = 125。
+# 电机↔仿真系标定(sign/zero)与命令常量需按实车调；enable_default 保持 false 更安全。
+rl_bridge:
+  ros__parameters:
+    rl_base: "/wheel_leg/rl"
+    policy_rate: 100.0
+    max_action_age: 0.02
+    history_length: 5
+    rl_obs_size: 125
+    rl_action_size: 6
+    enable_interface: "/wheel_leg/rl/enable"
+    enable_default: false
+    invalid_value: "nan"
+    reset_interface: "/chassis/reset_count"
+    expected_model_id: "0xe1af87c523ca739e"
+    joint_names: [left_hip_joint, left_knee_joint, right_hip_joint, right_knee_joint, left_wheel, right_wheel]
+    joint_base_path: "/wheel_leg"
+    joint_angle_suffix: "/angle"
+    joint_velocity_suffix: "/velocity"
+    joint_torque_suffix: "/torque"
+    # 必须与训练一致: RECOVER_2500_DEFAULT_DOF_POS = [0.35, 0.55, 0, -0.35, -0.55, 0]
+    default_joint_pos:
+      left_hip_joint: 0.35
+      left_knee_joint: 0.55
+      right_hip_joint: -0.35
+      right_knee_joint: -0.55
+      left_wheel: 0.0
+      right_wheel: 0.0
+    observation_terms:
+      - index=0 path=/wheel_leg/rl/imu/angular_velocity take=vec3 scale=0.25
+      - index=3 path=/wheel_leg/rl/imu/projected_gravity take=vec3
+      - index=6 path=/chassis/control_velocity take=x scale=3.0
+      - index=7 path=/chassis/control_velocity take=z scale=0.25
+      - index=8 path=/chassis/control_height scale=5.0
+      - index=9 type=joint_pos joints=left_hip_joint,left_knee_joint,right_hip_joint,right_knee_joint relative=true
+      - index=13 type=joint_vel joints=left_hip_joint,left_knee_joint,left_wheel,right_hip_joint,right_knee_joint,right_wheel scale=0.05
+      - index=19 type=last_action
+    action_terms:
+      - index=0 output=/wheel_leg/rl/action/left_hip name=left_hip
+      - index=1 output=/wheel_leg/rl/action/left_knee name=left_knee
+      - index=2 output=/wheel_leg/rl/action/left_wheel name=left_wheel
+      - index=3 output=/wheel_leg/rl/action/right_hip name=right_hip
+      - index=4 output=/wheel_leg/rl/action/right_knee name=right_knee
+      - index=5 output=/wheel_leg/rl/action/right_wheel name=right_wheel
+
+wheel_leg_rl_controller:
+  ros__parameters:
+    # 连杆/控制参数（来自 sim2sim compute_control）
+    l1: 0.210
+    l2: 0.250
+    linkage_offset: 1.6614
+    gas_spring_force: 369.0
+    torque_map: "numeric"
+    action_scale_pos: 0.5
+    action_scale_vel: 10.0
+    p_gain: 15.0
+    d_gain: 1.0
+    wheel_d_gain: 0.1
+    default_left_hip: 0.35
+    default_left_knee: 0.55
+    default_right_hip: -0.35
+    default_right_knee: -0.55
+    torque_limit: 40.0
+    wheel_torque_limit: 5.0
+    # 必须与 wheel_leg_rl_joint_state.sign_* 一致
+    sign_lf0: 1.0
+    sign_l20: 1.0
+    sign_lw: 1.0
+    sign_rf0: 1.0
+    sign_r20: 1.0
+    sign_rw: 1.0
+    # 与 wheel_leg_rl_joint_state.swap_sides 一致
+    swap_sides: true
+
+wheel_leg_rl_joint_state:
+  ros__parameters:
+    l1: 0.210
+    l2: 0.250
+    linkage_offset: 1.6614
+    # 虚拟膝解算的支路基准（把 knee 解到名义值附近，避免 atan2 跨 ±π 跳 2π）
+    default_left_knee: 0.55
+    default_right_knee: -0.55
+    # RMCS 左腿 = 模型右腿（左右交叉）
+    swap_sides: true
+    # 电机↔仿真系标定：angle_sim = sign * angle_rmcs + zero（唯一的标定出处）
+    sign_lf0: 1.0
+    sign_l20: 1.0
+    sign_lw: 1.0
+    sign_rf0: 1.0
+    sign_r20: 1.0
+    sign_rw: 1.0
+    zero_lf0: 0.0
+    zero_l20: 0.0
+    zero_lw: 0.0
+    zero_rf0: 0.0
+    zero_r20: 0.0
+    zero_rw: 0.0
+
+wheel_leg_chassis_controller:
+  ros__parameters:
+    vx_max: 2.5
+    yaw_rate_max: 3.0
+    deadzone: 0.08
+    # 高度命令范围/默认值必须与训练一致（本策略 sim2sim: 0.12~0.27）
+    command_height_min: 0.12
+    command_height_max: 0.27
+    default_command_height: 0.12
+    height_range: 0.15
+    height_step: 0.01
+    angular_z_invert: false
+    heading_kp: 3.0
+    height_invert: false
+
+policy_server:
+  ros__parameters:
+    rl_base: "/wheel_leg/rl"
+    rl_model_path: "models/test25000v2.onnx"
+    input_name: "obs"
+    history_input_name: "obs_history"
+    output_name: "actions"
+    normalization_from_metadata: true
+    publish_status: true
+
+policy_server_launcher:
+  ros__parameters:
+    autostart: true
+    params_file: "wheeleg-infantry.yaml"
+    respawn: true
+    respawn_delay: 1.0
+    poll_interval: 0.5
