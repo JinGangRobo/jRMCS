@@ -10,11 +10,11 @@ rmcs_executor:
       - rmcs_core::referee::command::Interaction -> referee_interaction
       - rmcs_core::referee::command::interaction::Ui -> referee_ui
 
-      # - rmcs_core::controller::gimbal::SimpleGimbalController -> gimbal_controller
-      # - rmcs_core::controller::pid::ErrorPidController -> yaw_angle_pid_controller
-      # - rmcs_core::controller::pid::PidController -> yaw_velocity_pid_controller
-      # - rmcs_core::controller::pid::ErrorPidController -> pitch_angle_pid_controller
-      # - rmcs_core::controller::pid::PidController -> pitch_velocity_pid_controller
+      - rmcs_core::controller::gimbal::SimpleGimbalController -> gimbal_controller
+      - rmcs_core::controller::pid::ErrorPidController -> yaw_angle_pid_controller
+      - rmcs_core::controller::pid::PidController -> yaw_velocity_pid_controller
+      - rmcs_core::controller::pid::ErrorPidController -> pitch_angle_pid_controller
+      - rmcs_core::controller::pid::PidController -> pitch_velocity_pid_controller
 
       - rmcs_core::controller::shooting::FrictionWheelController -> friction_wheel_controller
       - rmcs_core::controller::shooting::HeatController -> heat_controller
@@ -293,7 +293,7 @@ wheel_leg_rl_controller:
     l1: 0.210
     l2: 0.250
     linkage_offset: 1.6614
-    gas_spring_force: 369.0
+    gas_spring_force: 100.0
     torque_map: "numeric"
     action_scale_pos: 0.5
     action_scale_vel: 10.0
@@ -351,9 +351,27 @@ wheel_leg_chassis_controller:
     default_command_height: 0.12
     height_range: 0.15
     height_step: 0.01
+    # 带回中旋钮：满偏时的高度变化率 (m/s)；松开即停并保持高度
+    height_rate: 0.2
     angular_z_invert: false
     heading_kp: 3.0
     height_invert: false
+    # 以云台系控制底盘: 摇杆方向按云台朝向解释(云台对世界稳定, 底盘转向对齐)
+    use_gimbal_frame: true
+    # 若底盘转向与摇杆方向相反，改成 -1.0
+    gimbal_yaw_sign: 1.0
+    # 底盘前向持续跟随云台前向（摇杆居中时也继续对齐）
+    gimbal_follow: true
+    # 偏航 PID：输入=航向误差(rad)，输出=偏航率(rad/s)。ki/kd 默认 0 ⇒ 纯 P（同原 heading_kp）
+    yaw_kp: 3.0
+    yaw_ki: 0.0
+    yaw_kd: 0.0
+    # 航向固定偏移(rad)：一般 0；仅在确有固定角偏差时微调
+    heading_offset: 0.0
+    # 云台正方向与底盘相反 => pi；若"云台正方向"是电机角零点则保持 0
+    gimbal_forward_offset: 3.14159
+    # 目标在 ±90° 之外时改为倒车（而不是原地掉头）
+    allow_reverse: true
 
 policy_server:
   ros__parameters:
