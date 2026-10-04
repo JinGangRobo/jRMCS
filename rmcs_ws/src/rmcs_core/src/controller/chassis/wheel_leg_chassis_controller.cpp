@@ -55,6 +55,8 @@ public:
         register_output("/chassis/task_mode/up", task_mode_[2], 0.0);
         register_output("/chassis/task_mode/down", task_mode_[3], 0.0);
         register_output("/chassis/task_mode/jump", task_mode_[4], 0.0);
+        register_output("/wheel_leg/jump/active", jump_active_output_, false);
+        register_output("/wheel_leg/jump/phase", jump_phase_output_, 0.0);
 
         vx_max_ = get_parameter_or<double>("vx_max", 2.5);
         yaw_rate_max_ = get_parameter_or<double>("yaw_rate_max", 3.0);
@@ -67,6 +69,8 @@ public:
         height_step_ = get_parameter_or<double>("height_step", 0.01);
         // 带回中旋钮的高度变化率 (m/s)
         height_rate_ = get_parameter_or<double>("height_rate", 0.2);
+        // 跳跃总时长 (sim2sim JUMP_POLICY_DURATION_S)
+        jump_duration_ = get_parameter_or<double>("jump_duration", 0.55);
 
         angular_z_invert_ = get_parameter_or<bool>("angular_z_invert", false);
         height_invert_ = get_parameter_or<bool>("height_invert", false);
@@ -112,7 +116,30 @@ public:
         const auto switch_right = *switch_right_;
         const auto switch_left = *switch_left_;
         const auto keyboard = *keyboard_;
-        const auto selected_state = wheel_leg_control_state(switch_left, switch_right);
+        auto selected_state = wheel_leg_control_state(switch_left, switch_right);
+
+        // 跳跃触发：双中 -> 左杆拨低(右杆保持中) 的上升沿。
+        const bool left_down =
+            (switch_left == rmcs_msgs::Switch::DOWN && switch_right == rmcs_msgs::Switch::MIDDLE);
+        const bool left_down_prev =
+            (last_switch_left_ == rmcs_msgs::Switch::DOWN
+             && last_switch_right_ == rmcs_msgs::Switch::MIDDLE);
+        if (left_down && !left_down_prev && !jump_active_) {
+            jump_active_ = true;
+            jump_start_time_ = std::chrono::steady_clock::now();
+            RCLCPP_INFO(get_logger(), "[jump] triggered");
+        }
+        if (jump_active_) {
+            const double elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - jump_start_time_).count();
+            if (elapsed >= jump_duration_) {
+                jump_active_ = false;
+                jump_phase_ = 0.0;
+                RCLCPP_INFO(get_logger(), "[jump] finished");
+            } else {
+                jump_phase_ = elapsed / jump_duration_;
+            }
+        }
 
         // Power-on hold: stay at kInit(0) until the operator first moves a switch.
         if (!switch_activity_seen_
@@ -169,6 +196,11 @@ public:
             update_remote_control_(selected_state);
         } while (false);
 
+        // 跳跃输出（放最后，覆盖 update_remote_control_ 里对 task_mode 的赋值）
+        *jump_active_output_ = jump_active_;
+        *jump_phase_output_ = jump_active_ ? jump_phase_ : 0.0;
+        *task_mode_[4] = jump_active_ ? 1.0 : 0.0;
+
         last_switch_left_ = switch_left;
         last_switch_right_ = switch_right;
         last_keyboard_ = keyboard;
@@ -189,6 +221,8 @@ private:
     void stop_controls_(WheelLegControlState state) {
         hold_chassis_commands_();
         yaw_pid_.reset();
+        jump_active_ = false;
+        jump_phase_ = 0.0;
         *chassis_control_state_ = static_cast<int>(state);
         *rl_enable_ = false;
         *joint_enable_ = false;
@@ -365,6 +399,8 @@ private:
     std::array<OutputInterface<double>, 5> task_mode_;
 
     OutputInterface<rmcs_msgs::ChassisMode> mode_;
+    OutputInterface<bool> jump_active_output_;
+    OutputInterface<double> jump_phase_output_;
 
     rmcs_msgs::Switch last_switch_left_ = rmcs_msgs::Switch::UNKNOWN;
     rmcs_msgs::Switch last_switch_right_ = rmcs_msgs::Switch::UNKNOWN;
@@ -390,6 +426,11 @@ private:
     bool allow_reverse_ = true;
     bool gimbal_follow_ = true;
     pid::PidCalculator yaw_pid_;
+    // 跳跃：双中(kRl) -> 左杆拨低 触发；持续 jump_duration_ 后自动结束。
+    double jump_duration_ = 0.55;
+    bool jump_active_ = false;
+    double jump_phase_ = 0.0;
+    std::chrono::steady_clock::time_point jump_start_time_{};
 
     bool spinning_forward_ = true;
     bool switch_activity_seen_ = false;

@@ -36,6 +36,7 @@ rmcs_executor:
       - rmcs_core::controller::chassis::WheelLegRlController -> wheel_leg_rl_controller
       - rmcs_core::controller::chassis::WheelLegImuBroadcaster -> wheel_leg_imu_broadcaster
       - rmcs_rl::RlBridge -> rl_bridge
+      - rmcs_rl::RlBridge -> jump_rl_bridge
       - rmcs_rl::PolicyServerLauncher -> policy_server_launcher
 
       - rmcs_core::controller::diagnosis::Diagnosis -> diagnosis
@@ -287,6 +288,51 @@ rl_bridge:
       - index=4 output=/wheel_leg/rl/action/right_knee name=right_knee
       - index=5 output=/wheel_leg/rl/action/right_wheel name=right_wheel
 
+# 跳跃策略的桥：与 rl_bridge 同构，但 base / 默认角 / 动作输出都不同；
+# 只在 /wheel_leg/jump/active 为真时产出有效动作（控制器按 jump_active 选用）。
+jump_rl_bridge:
+  ros__parameters:
+    rl_base: "/wheel_leg/rl/jump"
+    policy_rate: 100.0
+    max_action_age: 0.02
+    history_length: 5
+    rl_obs_size: 125
+    rl_action_size: 6
+    enable_interface: "/wheel_leg/jump/active"
+    enable_default: false
+    invalid_value: "nan"
+    reset_interface: "/chassis/reset_count"
+    expected_model_id: "0xbbd7b9a069148502"   # jump5800.onnx (盖章后 FNV1a64)；换模型要更新
+    joint_names: [left_hip_joint, left_knee_joint, right_hip_joint, right_knee_joint, left_wheel, right_wheel]
+    joint_base_path: "/wheel_leg"
+    joint_angle_suffix: "/angle"
+    joint_velocity_suffix: "/velocity"
+    joint_torque_suffix: "/torque"
+    # jump preset 名义角 = [0.35, 0.55, 0, -0.35, -0.55, 0]（与 plane 相同）
+    default_joint_pos:
+      left_hip_joint: 0.35
+      left_knee_joint: 0.55
+      right_hip_joint: -0.35
+      right_knee_joint: -0.55
+      left_wheel: 0.0
+      right_wheel: 0.0
+    observation_terms:
+      - index=0 path=/wheel_leg/rl/imu/angular_velocity take=vec3 scale=0.25
+      - index=3 path=/wheel_leg/rl/imu/projected_gravity take=vec3
+      - index=6 path=/chassis/control_velocity take=x scale=3.0
+      - index=7 path=/chassis/control_velocity take=z scale=0.25
+      - index=8 path=/chassis/control_height scale=5.0
+      - index=9 type=joint_pos joints=left_hip_joint,left_knee_joint,right_hip_joint,right_knee_joint relative=true
+      - index=13 type=joint_vel joints=left_hip_joint,left_knee_joint,left_wheel,right_hip_joint,right_knee_joint,right_wheel scale=0.05
+      - index=19 type=last_action
+    action_terms:
+      - index=0 output=/wheel_leg/rl/jump/action/left_hip name=left_hip
+      - index=1 output=/wheel_leg/rl/jump/action/left_knee name=left_knee
+      - index=2 output=/wheel_leg/rl/jump/action/left_wheel name=left_wheel
+      - index=3 output=/wheel_leg/rl/jump/action/right_hip name=right_hip
+      - index=4 output=/wheel_leg/rl/jump/action/right_knee name=right_knee
+      - index=5 output=/wheel_leg/rl/jump/action/right_wheel name=right_wheel
+
 wheel_leg_rl_controller:
   ros__parameters:
     # 连杆/控制参数（来自 sim2sim compute_control）
@@ -306,6 +352,20 @@ wheel_leg_rl_controller:
     default_right_knee: -0.55
     torque_limit: 40.0
     wheel_torque_limit: 5.0
+    # ===== 跳跃策略参数（由 /wheel_leg/jump/active 切换）=====
+    # sim2sim jump preset: default=[0.35,0.55,0,-0.35,-0.55,0], Kp=6, Kd=0.5/0.5/0.2, taumax=30
+    jump_p_gain: 6.0
+    jump_d_gain: 0.5
+    jump_wheel_d_gain: 0.2
+    jump_default_left_hip: 0.35
+    jump_default_left_knee: 0.55
+    jump_default_right_hip: -0.35
+    jump_default_right_knee: -0.55
+    jump_torque_limit: 30.0
+    # 跳跃相位 [start,end] 内对足端力乘 jump_f_scale（sim2sim 默认 1.0 = 不缩放）
+    jump_f_scale: 1.0
+    jump_f_scale_start: 0.1
+    jump_f_scale_end: 0.4
     # 必须与 wheel_leg_rl_joint_state.sign_* 一致
     sign_lf0: 1.0
     sign_l20: 1.0
@@ -345,11 +405,11 @@ wheel_leg_chassis_controller:
     vx_max: 2.5
     yaw_rate_max: 3.0
     deadzone: 0.08
-    # 高度命令范围/默认值必须与训练一致（本策略 sim2sim: 0.12~0.27）
-    command_height_min: 0.12
-    command_height_max: 0.27
-    default_command_height: 0.12
-    height_range: 0.15
+    # 高度命令范围/默认值必须与训练一致（sim2sim: HEIGHT_MIN/MAX=0.14/0.25, 初始 0.14）
+    command_height_min: 0.14
+    command_height_max: 0.25
+    default_command_height: 0.14
+    height_range: 0.11
     height_step: 0.01
     # 带回中旋钮：满偏时的高度变化率 (m/s)；松开即停并保持高度
     height_rate: 0.2
@@ -372,11 +432,16 @@ wheel_leg_chassis_controller:
     gimbal_forward_offset: 3.14159
     # 目标在 ±90° 之外时改为倒车（而不是原地掉头）
     allow_reverse: true
+    # 跳跃总时长(s)；触发=双中(kRl)后把左杆拨低。sim2sim: JUMP_POLICY_DURATION_S=0.55
+    jump_duration: 0.55
 
 policy_server:
   ros__parameters:
     rl_base: "/wheel_leg/rl"
     rl_model_path: "models/test25000v2.onnx"
+    # 同一进程再载一个跳跃策略
+    jump_rl_base: "/wheel_leg/rl/jump"
+    jump_model_path: "models/jump5800.onnx"
     input_name: "obs"
     history_input_name: "obs_history"
     output_name: "actions"

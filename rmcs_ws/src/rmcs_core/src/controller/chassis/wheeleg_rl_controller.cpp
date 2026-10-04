@@ -55,6 +55,20 @@ public:
         torque_limit_ = get_parameter_or<double>("torque_limit", 30.0);
         wheel_torque_limit_ = get_parameter_or<double>("wheel_torque_limit", 5.0);
 
+        // 跳跃策略参数（切换源: /wheel_leg/jump/active）。默认值取自 sim2sim 的 jump preset。
+        jump_p_gain_ = get_parameter_or<double>("jump_p_gain", 6.0);
+        jump_d_gain_ = get_parameter_or<double>("jump_d_gain", 0.5);
+        jump_wheel_d_gain_ = get_parameter_or<double>("jump_wheel_d_gain", 0.2);
+        jump_default_left_hip_ = get_parameter_or<double>("jump_default_left_hip", 0.35);
+        jump_default_left_knee_ = get_parameter_or<double>("jump_default_left_knee", 0.55);
+        jump_default_right_hip_ = get_parameter_or<double>("jump_default_right_hip", -0.35);
+        jump_default_right_knee_ = get_parameter_or<double>("jump_default_right_knee", -0.55);
+        jump_torque_limit_ = get_parameter_or<double>("jump_torque_limit", 30.0);
+        // 跳跃相位窗口内的足端力缩放（sim2sim: jump_f_scale=1.0, 窗口 [0.1, 0.4]）
+        jump_f_scale_ = get_parameter_or<double>("jump_f_scale", 1.0);
+        jump_f_scale_start_ = get_parameter_or<double>("jump_f_scale_start", 0.1);
+        jump_f_scale_end_ = get_parameter_or<double>("jump_f_scale_end", 0.4);
+
         // 与 wheel_leg_rl_joint_state 的 sign_* 必须一致（sim->接口的力矩同号映射）。
         constexpr std::array<const char*, 6> kSignKeys{
             "sign_lf0", "sign_l20", "sign_lw", "sign_rf0", "sign_r20", "sign_rw"};
@@ -82,6 +96,15 @@ public:
             register_input(std::string{"/wheel_leg/rl/action/"} + kActionNames[i], action_[i], false);
         register_input("/wheel_leg/rl/valid", valid_, false);
         register_input("/wheel_leg/rl/healthy", healthy_, false);
+        // 跳跃策略动作/有效性（由第二个 bridge 提供）
+        for (std::size_t i = 0; i < 6; ++i)
+            register_input(
+                std::string{"/wheel_leg/rl/jump/action/"} + kActionNames[i], jump_action_[i], false);
+        register_input("/wheel_leg/rl/jump/valid", jump_valid_, false);
+        register_input("/wheel_leg/rl/jump/healthy", jump_healthy_, false);
+        // 跳跃模式（由底盘控制器给出）
+        register_input("/wheel_leg/jump/active", jump_active_, false);
+        register_input("/wheel_leg/jump/phase", jump_phase_, false);
 
         // 电机力矩输出: 注册顺序 [lf0, l20, lw, rf0, r20, rw]
         constexpr std::array<const char*, 6> kMotorNames{
@@ -113,6 +136,14 @@ private:
     }
 
     bool policy_active() const {
+        if (jump_active_.ready() && *jump_active_) {
+            if (!jump_valid_.ready() || !jump_healthy_.ready() || *jump_valid_ <= 0.5
+                || *jump_healthy_ <= 0.5)
+                return false;
+            return std::all_of(jump_action_.begin(), jump_action_.end(), [](const auto& input) {
+                return input.ready() && std::isfinite(*input);
+            });
+        }
         return valid_.ready() && healthy_.ready() && *valid_ > 0.5 && *healthy_ > 0.5
             && std::all_of(action_.begin(), action_.end(), [](const auto& input) {
                    return input.ready() && std::isfinite(*input);
@@ -120,6 +151,12 @@ private:
     }
 
     void compute_control() {
+        // 跳跃模式：动作/参数/默认角都切到 jump 的一套
+        const bool jumping = jump_active_.ready() && *jump_active_;
+        const auto action_value = [&](std::size_t i) {
+            return jumping ? *jump_action_[i] : *action_[i];
+        };
+
         const double q[6] = {
             *joint_angle_[0], *joint_angle_[1], *joint_angle_[2],
             *joint_angle_[3], *joint_angle_[4], *joint_angle_[5]};
@@ -127,20 +164,31 @@ private:
             *joint_velocity_[0], *joint_velocity_[1], *joint_velocity_[2],
             *joint_velocity_[3], *joint_velocity_[4], *joint_velocity_[5]};
 
-        const std::array<double, 6> p_gain{p_gain_, p_gain_, 0.0, p_gain_, p_gain_, 0.0};
+        // 按跳跃模式选择 PD/默认角/限幅（jump preset 见 sim2sim）
+        const double p_gain_value = jumping ? jump_p_gain_ : p_gain_;
+        const double d_gain_value = jumping ? jump_d_gain_ : d_gain_;
+        const double wheel_d_gain_value = jumping ? jump_wheel_d_gain_ : wheel_d_gain_;
+        const double default_lh = jumping ? jump_default_left_hip_ : default_left_hip_;
+        const double default_lk = jumping ? jump_default_left_knee_ : default_left_knee_;
+        const double default_rh = jumping ? jump_default_right_hip_ : default_right_hip_;
+        const double default_rk = jumping ? jump_default_right_knee_ : default_right_knee_;
+        const double torque_limit = jumping ? jump_torque_limit_ : torque_limit_;
+
+        const std::array<double, 6> p_gain{
+            p_gain_value, p_gain_value, 0.0, p_gain_value, p_gain_value, 0.0};
         const std::array<double, 6> d_gain{
-            d_gain_, d_gain_, wheel_d_gain_, d_gain_, d_gain_, wheel_d_gain_};
+            d_gain_value, d_gain_value, wheel_d_gain_value, d_gain_value, d_gain_value,
+            wheel_d_gain_value};
         const std::array<double, 6> default_pos{
-            default_left_hip_, default_left_knee_, 0.0, default_right_hip_, default_right_knee_,
-            0.0};
+            default_lh, default_lk, 0.0, default_rh, default_rk, 0.0};
 
         std::array<double, 6> pos_ref{}, vel_ref{}, tau_virtual{};
         for (std::size_t i = 0; i < 6; ++i)
-            pos_ref[i] = *action_[i] * action_scale_pos_;
+            pos_ref[i] = action_value(i) * action_scale_pos_;
         pos_ref[2] = 0.0;
         pos_ref[5] = 0.0;
         for (std::size_t i = 0; i < 6; ++i)
-            vel_ref[i] = *action_[i] * action_scale_vel_;
+            vel_ref[i] = action_value(i) * action_scale_vel_;
         vel_ref[0] = vel_ref[1] = vel_ref[3] = vel_ref[4] = 0.0;
         for (std::size_t i = 0; i < 6; ++i)
             tau_virtual[i] =
@@ -171,11 +219,19 @@ private:
             tau_rf20_act = tau_rf1 * jr.d_phi1;
         }
 
-        // force_map 域内气弹簧补偿
+        // 跳跃相位窗口内的足端力缩放
+        const double f_scale =
+            (jumping && jump_phase_.ready() && *jump_phase_ >= jump_f_scale_start_
+             && *jump_phase_ < jump_f_scale_end_)
+                ? jump_f_scale_
+                : 1.0;
+
+        // force_map 域内气弹簧补偿 + 跳跃力缩放
         const auto ml = linkage::force_map(linkage_offset_ + l20, lf0, l1_, l2_);
         double fl0 = ml.i00 * tau_lf20_act + ml.i01 * tau_lf0_act;
         double fl1 = ml.i10 * tau_lf20_act + ml.i11 * tau_lf0_act;
         fl0 -= gas_spring_force_ * ml.l0;
+        fl0 *= f_scale;
         tau_lf20_act = ml.j00 * fl0 + ml.j01 * fl1;
         tau_lf0_act = ml.j10 * fl0 + ml.j11 * fl1;
 
@@ -183,14 +239,15 @@ private:
         double fr0 = mr.i00 * tau_rf20_act + mr.i01 * tau_rf0_act;
         double fr1 = mr.i10 * tau_rf20_act + mr.i11 * tau_rf0_act;
         fr0 += gas_spring_force_ * mr.l0;
+        fr0 *= f_scale;
         tau_rf20_act = mr.j00 * fr0 + mr.j01 * fr1;
         tau_rf0_act = mr.j10 * fr0 + mr.j11 * fr1;
 
         // 按电机注册顺序 [lf0, l20, lw, rf0, r20, rw] 对齐输出
         const std::array<double, 6> tau_motor{
-            clamp(tau_lf0_act, torque_limit_), clamp(tau_lf20_act, torque_limit_),
-            clamp(tau_virtual[2], wheel_torque_limit_), clamp(tau_rf0_act, torque_limit_),
-            clamp(tau_rf20_act, torque_limit_), clamp(tau_virtual[5], wheel_torque_limit_)};
+            clamp(tau_lf0_act, torque_limit), clamp(tau_lf20_act, torque_limit),
+            clamp(tau_virtual[2], wheel_torque_limit_), clamp(tau_rf0_act, torque_limit),
+            clamp(tau_rf20_act, torque_limit), clamp(tau_virtual[5], wheel_torque_limit_)};
         // tau_motor 是模型序；motor_torque_ 是 RMCS 序。RMCS 左=模型右时需按 (k+3)%6 对调。
         for (std::size_t k = 0; k < 6; ++k) {
             const std::size_t r = swap_sides_ ? (k + 3) % 6 : k;
@@ -210,6 +267,12 @@ private:
     double default_left_hip_ = -0.23, default_left_knee_ = -0.65;
     double default_right_hip_ = 0.23, default_right_knee_ = 0.65;
     double torque_limit_ = 30.0, wheel_torque_limit_ = 5.0;
+    // 跳跃策略参数
+    double jump_p_gain_ = 6.0, jump_d_gain_ = 0.5, jump_wheel_d_gain_ = 0.2;
+    double jump_default_left_hip_ = 0.35, jump_default_left_knee_ = 0.55;
+    double jump_default_right_hip_ = -0.35, jump_default_right_knee_ = -0.55;
+    double jump_torque_limit_ = 30.0;
+    double jump_f_scale_ = 1.0, jump_f_scale_start_ = 0.1, jump_f_scale_end_ = 0.4;
     std::array<double, 6> sign_{1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
     bool swap_sides_ = false;
 
@@ -217,6 +280,10 @@ private:
     std::array<OutputInterface<double>, 6> motor_torque_;
     InputInterface<double> l20_angle_, r20_angle_;
     InputInterface<double> valid_, healthy_;
+    InputInterface<bool> jump_active_;
+    InputInterface<double> jump_phase_;
+    std::array<InputInterface<double>, 6> jump_action_;
+    InputInterface<double> jump_valid_, jump_healthy_;
 };
 
 } // namespace rmcs_core::controller::chassis
