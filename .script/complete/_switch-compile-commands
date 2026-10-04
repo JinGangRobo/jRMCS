@@ -1,0 +1,27 @@
+#compdef switch-compile-commands
+
+_switch_compile_commands_ids() {
+    local ws="${RMCS_PATH:-/workspaces/RMCS}/rmcs_ws"
+    local dir
+    local -a ids
+
+    if [[ -d "${ws}/build" ]]; then
+        ids+=(native)
+    fi
+    for dir in "${ws}"/build-cross-*(N/); do
+        ids+=("${${dir:t}#build-cross-}")
+    done
+
+    compadd -- $ids
+}
+
+_arguments \
+    '1:action or database:->action' \
+    '(-h --help)'{-h,--help}'[Show help]'
+
+case "$state" in
+action)
+    _values -w 'action' none restore status
+    _switch_compile_commands_ids
+    ;;
+esac

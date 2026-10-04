@@ -11,3 +11,6 @@ rm -rf -- \
     "${RMCS_PATH}/rmcs_ws/build" \
     "${RMCS_PATH}/rmcs_ws/install" \
     "${RMCS_PATH}/rmcs_ws/log"
+
+# Root symlink managed by switch-compile-commands; the build directory is gone.
+rm -f -- "${RMCS_PATH}/rmcs_ws/compile_commands.json"

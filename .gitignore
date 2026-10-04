@@ -53,6 +53,9 @@ CATKIN_IGNORE
 # Clangd cache files
 .cache/
 
+# Clangd database link managed by .script/switch-compile-commands
+/rmcs_ws/compile_commands.json
+
 # VSCode configure files
 .vscode/
 
