@@ -12,5 +12,10 @@ rm -rf -- \
     "${RMCS_PATH}/rmcs_ws/install" \
     "${RMCS_PATH}/rmcs_ws/log"
 
+rm -rf -- \
+    "${RMCS_PATH}/rmcs_ws/build-cross-arm64" \
+    "${RMCS_PATH}/rmcs_ws/install-cross-arm64" \
+    "${RMCS_PATH}/rmcs_ws/log-cross-arm64"
+
 # Root symlink managed by switch-compile-commands; the build directory is gone.
 rm -f -- "${RMCS_PATH}/rmcs_ws/compile_commands.json"
