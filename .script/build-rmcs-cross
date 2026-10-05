@@ -154,6 +154,7 @@ CLICOLOR_FORCE=1 NINJA_STATUS="" \
     colcon \
     --log-base "${log_base}" \
     build \
+    --symlink-install \
     --merge-install \
     --build-base "${build_base}" \
     --install-base "${install_base}" \
