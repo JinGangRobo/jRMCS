@@ -37,11 +37,14 @@ public:
         single_shot_max_stop_delay_ = static_cast<int>(
             std::round(1000.0 * get_parameter("single_shot_max_stop_delay").as_double()));
 
+        bullet_allowance_default_ =
+            get_parameter_or("bullet_allowance_default", static_cast<std::int64_t>(100));
+
         register_input("/gimbal/friction_ready", friction_ready_);
         register_input("/gimbal/bullet_fired", bullet_fired_);
         register_input(
             "/gimbal/control_bullet_allowance/limited_by_heat",
-            control_bullet_allowance_limited_by_heat_);
+            control_bullet_allowance_limited_by_heat_, false);
 
         register_input("/remote/switch/right", switch_right_);
         register_input("/remote/switch/left", switch_left_);
@@ -63,6 +66,15 @@ public:
             should_shoot_.bind_directly(false);
         if (!single_shoot_.ready())
             single_shoot_.bind_directly(false);
+        if (!control_bullet_allowance_limited_by_heat_.ready()) {
+            RCLCPP_WARN(
+                get_logger(),
+                "Failed to fetch \"/gimbal/control_bullet_allowance/limited_by_heat\", using the "
+                "fixed %ld.",
+                static_cast<long>(bullet_allowance_default_));
+            control_bullet_allowance_limited_by_heat_.make_and_bind_directly(
+                bullet_allowance_default_);
+        }
     }
 
     void update() override {
@@ -208,6 +220,8 @@ private:
     int bullet_feeder_eject_time_, bullet_feeder_deep_eject_time_;
 
     int single_shot_max_stop_delay_, single_shot_stop_counter_ = 0;
+
+    std::int64_t bullet_allowance_default_ = 100;
 
     InputInterface<bool> friction_ready_;
     InputInterface<bool> bullet_fired_;
