@@ -1,7 +1,9 @@
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <span>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -17,19 +19,15 @@
 #include <rclcpp/subscription.hpp>
 #include <rmcs_description/tf_description.hpp>
 #include <rmcs_executor/component.hpp>
-#include <rmcs_msgs/serial_interface.hpp>
-#include <rmcs_utility/ring_buffer.hpp>
 #include <std_msgs/msg/int32.hpp>
 
 #include "filter/low_pass_filter.hpp"
-#include "hardware/device/bmi088_ekf.hpp"
-#include "hardware/device/board_clock_lifter.hpp"
+#include "hardware/device/bmi088_librmcs.hpp"
 #include "hardware/device/can_packet.hpp"
 #include "hardware/device/dji_motor.hpp"
 #include "hardware/device/dm_motor.hpp"
 #include "hardware/device/dr16.hpp"
-#include "hardware/device/gy614.hpp"
-#include "hardware/device/j_supercap.hpp"
+#include "hardware/device/remote_control.hpp"
 
 namespace rmcs_core::hardware {
 
@@ -41,9 +39,8 @@ public:
         : Node{
               get_component_name(),
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)}
-        , command_component_(
-              create_partner_component<DualInfantryCommand>(
-                  get_component_name() + "_command", *this)) {
+        , command_component_(create_partner_component<DualInfantryCommand>(
+              get_component_name() + "_command", *this)) {
         using namespace rmcs_description;
 
         register_output("/tf", tf_);
@@ -55,6 +52,7 @@ public:
                 gimbal_calibrate_subscription_callback(std::move(msg));
             });
 
+        remote_control_ = std::make_unique<device::RemoteControl>(*this);
         top_board_ = std::make_unique<TopBoard>(
             *this, *command_component_, get_parameter("board_serial_top_board").as_string());
         bottom_board_ = std::make_unique<BottomBoard>(
@@ -66,6 +64,10 @@ public:
     void update() override {
         top_board_->update();
         bottom_board_->update();
+        remote_control_->update();
+
+        if (tf_broadcast_counter_++ % kTfBroadcastDivider == 0)
+            fast_tf::rcl::broadcast_all(*tf_);
     }
 
     void command_update() {
@@ -104,7 +106,6 @@ private:
             DualInfantry& dual_infantry, DualInfantryCommand& dual_infantry_command,
             std::string_view board_serial = {})
             : tf_(dual_infantry.tf_)
-            , gy614_(dual_infantry, "/friction_wheels/temperature")
             , dr16_{}
             , imu_bias_x(static_cast<int16_t>(dual_infantry.get_parameter("imu_bias_x").as_int()))
             , imu_bias_y(static_cast<int16_t>(dual_infantry.get_parameter("imu_bias_y").as_int()))
@@ -117,16 +118,14 @@ private:
 
             gimbal_top_yaw_motor_.configure(
                 device::DjiMotor::Config{device::DjiMotor::Type::kGM6020Voltage, 2}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            dual_infantry.get_parameter("top_yaw_motor_zero_point").as_int())));
+                    .set_encoder_zero_point(static_cast<int>(
+                        dual_infantry.get_parameter("top_yaw_motor_zero_point").as_int())));
 
             gimbal_pitch_motor_.configure(
                 device::DmMotor::Config{device::DmMotor::Type::kJ4310}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            dual_infantry.get_parameter("pitch_motor_zero_point").as_int()))
-                    .set_reversed());
+                    .set_reversed()
+                    .set_encoder_zero_point(static_cast<int>(
+                        dual_infantry.get_parameter("pitch_motor_zero_point").as_int())));
 
             gimbal_left_friction_.configure(
                 device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 2}
@@ -146,6 +145,28 @@ private:
             dual_infantry.register_output("/gimbal/pitch/velocity_imu", gimbal_pitch_velocity_imu_);
 
             dual_infantry.register_output("/debug/pitch/raw_angle", debug_pitch_raw_angle_);
+            dual_infantry.register_output("/debug/top_board/imu_accel_x", debug_accel_x_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_accel_y", debug_accel_y_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_accel_z", debug_accel_z_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_gyro_x", debug_gyro_x_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_gyro_y", debug_gyro_y_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_gyro_z", debug_gyro_z_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_roll", debug_imu_roll_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_pitch", debug_imu_pitch_, 0.0);
+            dual_infantry.register_output("/debug/top_board/imu_yaw", debug_imu_yaw_, 0.0);
+
+            imu_.set_coordinate_mapping(
+                [](double x, double y, double z) { return std::make_tuple(y, x, -z); });
+            imu_.set_gyroscope_fine_bias(
+                dual_infantry.get_parameter_or("imu_bias_fine_x", 0.0),
+                dual_infantry.get_parameter_or("imu_bias_fine_y", 0.0),
+                dual_infantry.get_parameter_or("imu_bias_fine_z", 0.0));
+            const auto startup_calibration_samples =
+                dual_infantry.get_parameter_or("imu_startup_calibration_samples", 1000);
+            imu_.set_startup_calibration_samples(
+                static_cast<std::size_t>(std::max(startup_calibration_samples, 0)));
+
+            dual_infantry.remote_control_->register_dr16(&dr16_);
 
             board_ = std::make_unique<librmcs::board::CBoard>(*this, board_serial);
         }
@@ -153,34 +174,39 @@ private:
         ~TopBoard() final = default;
 
         void update() {
-            const auto snapshot = imu_.snapshot();
+            imu_.update_status();
 
             gimbal_top_yaw_motor_.update_status();
             gimbal_pitch_motor_.update_status();
 
-            if (snapshot) {
-                tf_->set_transform<rmcs_description::PitchLink, rmcs_description::OdomImu>(
-                    snapshot->orientation.conjugate());
-            }
+            const Eigen::Quaterniond gimbal_imu_pose{imu_.q0(), imu_.q1(), imu_.q2(), imu_.q3()};
+
+            const Eigen::Matrix3d rotation = gimbal_imu_pose.toRotationMatrix();
+            *debug_imu_roll_ = std::atan2(rotation(2, 1), rotation(2, 2));
+            *debug_imu_pitch_ = std::asin(std::clamp(-rotation(2, 0), -1.0, 1.0));
+            *debug_imu_yaw_ = std::atan2(rotation(1, 0), rotation(0, 0));
+
+            tf_->set_transform<rmcs_description::PitchLink, rmcs_description::OdomImu>(
+                gimbal_imu_pose.conjugate());
             tf_->set_state<rmcs_description::YawLink, rmcs_description::PitchLink>(
                 gimbal_pitch_motor_.angle());
 
-            fast_tf::rcl::broadcast_all(*tf_);
-            if (snapshot) {
-                tf_->set_transform<rmcs_description::BaseLink, rmcs_description::RawImu>(
-                    snapshot->orientation);
-            }
+            tf_->set_transform<rmcs_description::BaseLink, rmcs_description::RawImu>(
+                gimbal_imu_pose);
 
-            gy614_.update_status();
             dr16_.update_status();
 
-            if (snapshot) {
-                *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
-                *gimbal_pitch_velocity_imu_ =
-                    imu_gy_velocity_filter_.update(snapshot->gyro_body.y());
-            }
+            *gimbal_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(imu_.gz());
+            *gimbal_pitch_velocity_imu_ = imu_gy_velocity_filter_.update(imu_.gy());
 
             *debug_pitch_raw_angle_ = gimbal_pitch_motor_.last_raw_angle();
+
+            *debug_accel_x_ = imu_.ax();
+            *debug_accel_y_ = imu_.ay();
+            *debug_accel_z_ = imu_.az();
+            *debug_gyro_x_ = imu_.gx();
+            *debug_gyro_y_ = imu_.gy();
+            *debug_gyro_z_ = imu_.gz();
 
             gimbal_left_friction_.update_status();
             gimbal_right_friction_.update_status();
@@ -202,67 +228,61 @@ private:
                 .can_transmit(
                     Spec::kCans.kCan1, {.can_id = 0x200, .can_data = friction_packet.as_bytes()})
                 .can_transmit(
-                    Spec::kCans.kCan2, {.can_id = 0x3, .can_data = pitch_packet.as_bytes()});
+                    Spec::kCans.kCan1, {.can_id = 0x3, .can_data = pitch_packet.as_bytes()});
         }
 
     private:
         void can_receive_callback(const Spec::Can& can, const View::Can& data) override {
             if (data.is_extended_can_id || data.is_remote_transmission) [[unlikely]]
                 return;
+            if (can != Spec::kCans.kCan1) [[unlikely]]
+                return;
 
             const auto& can_id = data.can_id;
-            if (can == Spec::kCans.kCan1) {
-                if (can_id == gimbal_top_yaw_motor_.recv_id()) {
-                    gimbal_top_yaw_motor_.store_status(data.can_data);
-                } else if (can_id == gimbal_left_friction_.recv_id()) {
-                    gimbal_left_friction_.store_status(data.can_data);
-                } else if (can_id == gimbal_right_friction_.recv_id()) {
-                    gimbal_right_friction_.store_status(data.can_data);
-                } else if (can_id == gimbal_bullet_feeder_.recv_id()) {
-                    gimbal_bullet_feeder_.store_status(data.can_data);
-                }
-            } else if (can == Spec::kCans.kCan2) {
-                if (can_id == 0x213) {
-                    gimbal_pitch_motor_.store_status(data.can_data);
-                }
+            if (can_id == gimbal_top_yaw_motor_.recv_id()) {
+                gimbal_top_yaw_motor_.store_status(data.can_data);
+            } else if (can_id == gimbal_left_friction_.recv_id()) {
+                gimbal_left_friction_.store_status(data.can_data);
+            } else if (can_id == gimbal_right_friction_.recv_id()) {
+                gimbal_right_friction_.store_status(data.can_data);
+            } else if (can_id == gimbal_bullet_feeder_.recv_id()) {
+                gimbal_bullet_feeder_.store_status(data.can_data);
+            } else if (can_id == 0x213) {
+                gimbal_pitch_motor_.store_status(data.can_data);
             }
         }
 
         void uart_receive_callback(const Spec::Uart& uart, const View::Uart& data) override {
-            if (uart == Spec::kUarts.kDbus) {
+            if (uart == Spec::kUarts.kDbus)
                 dr16_.store_status(data.uart_data.data(), data.uart_data.size());
-            } else if (uart == Spec::kUarts.kUart2) {
-                gy614_.store_status(data.uart_data.data(), data.uart_data.size());
-            }
         }
 
         void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-            const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
-            imu_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
+            imu_.store_accelerometer_status(data.x, data.y, data.z);
         }
 
         void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-            const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
-            if (!timestamp.has_value())
-                return;
-            imu_.try_update_with_gyroscope_sample(
-                data.x - imu_bias_x, data.y - imu_bias_y, data.z - imu_bias_z, *timestamp);
+            imu_.store_gyroscope_status(
+                static_cast<int16_t>(data.x - imu_bias_x),
+                static_cast<int16_t>(data.y - imu_bias_y),
+                static_cast<int16_t>(data.z - imu_bias_z));
         }
 
         OutputInterface<rmcs_description::Tf>& tf_;
 
-        device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{}};
-        device::BoardClockLifter board_clock_lifter_;
-        device::Gy614 gy614_;
+        device::LibrmcsBmi088 imu_;
         device::Dr16 dr16_;
 
         OutputInterface<double> gimbal_yaw_velocity_imu_;
         OutputInterface<double> gimbal_pitch_velocity_imu_;
         OutputInterface<double> debug_pitch_raw_angle_;
+        OutputInterface<double> debug_accel_x_, debug_accel_y_, debug_accel_z_;
+        OutputInterface<double> debug_gyro_x_, debug_gyro_y_, debug_gyro_z_;
+        OutputInterface<double> debug_imu_roll_, debug_imu_pitch_, debug_imu_yaw_;
 
         int16_t imu_bias_x = 0, imu_bias_y = 0, imu_bias_z = 0;
 
-        filter::LowPassFilter<> imu_gy_velocity_filter_{3.0f, 1000.0f};
+        filter::LowPassFilter<> imu_gy_velocity_filter_{10.0f, 1000.0f};
         filter::LowPassFilter<> imu_gz_velocity_filter_{30.0f, 1000.0f};
 
         device::DjiMotor gimbal_top_yaw_motor_;
@@ -283,6 +303,12 @@ private:
             DualInfantry& dual_infantry, DualInfantryCommand& dual_infantry_command,
             std::string_view board_serial = {})
             : tf_(dual_infantry.tf_)
+            , imu_bias_x(static_cast<int16_t>(
+                  dual_infantry.get_parameter_or("imu_bias_bottom_x", 0)))
+            , imu_bias_y(static_cast<int16_t>(
+                  dual_infantry.get_parameter_or("imu_bias_bottom_y", 0)))
+            , imu_bias_z(static_cast<int16_t>(
+                  dual_infantry.get_parameter_or("imu_bias_bottom_z", 0)))
             , gimbal_bottom_yaw_motor_(dual_infantry, dual_infantry_command, "/gimbal/bottom_yaw")
             , chassis_wheel_motors_(
                   {dual_infantry, dual_infantry_command, "/chassis/left_front_wheel",
@@ -292,28 +318,30 @@ private:
                   {dual_infantry, dual_infantry_command, "/chassis/right_back_wheel",
                    device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3}},
                   {dual_infantry, dual_infantry_command, "/chassis/left_back_wheel",
-                   device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 4}})
-            , supercap_(dual_infantry, 28.5) {
+                   device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 4}}) {
 
             gimbal_bottom_yaw_motor_.configure(
                 device::DjiMotor::Config{device::DjiMotor::Type::kGM6020Voltage, 1}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            dual_infantry.get_parameter("bottom_yaw_motor_zero_point").as_int())));
-
-            dual_infantry.register_output("/referee/serial", referee_serial_);
-            referee_serial_->read = [this](std::byte* buffer, size_t size) {
-                return referee_ring_buffer_receive_.pop_front_n(
-                    [&buffer](std::byte byte) noexcept { *buffer++ = byte; }, size);
-            };
-            referee_serial_->write = [this](const std::byte* buffer, size_t size) {
-                board_->start_transmit().uart_transmit(
-                    Spec::kUarts.kUart1, {.uart_data = std::span<const std::byte>{buffer, size}});
-                return size;
-            };
+                    .set_encoder_zero_point(static_cast<int>(
+                        dual_infantry.get_parameter("bottom_yaw_motor_zero_point").as_int())));
 
             dual_infantry.register_output(
-                "/chassis/yaw/velocity_imu", chassis_yaw_velocity_imu_, 0);
+                "/chassis/yaw/velocity_imu", chassis_yaw_velocity_imu_, 0.0);
+
+            dual_infantry.register_output("/debug/bottom_board/imu_gyro_x", debug_gyro_x_, 0.0);
+            dual_infantry.register_output("/debug/bottom_board/imu_gyro_y", debug_gyro_y_, 0.0);
+            dual_infantry.register_output("/debug/bottom_board/imu_gyro_z", debug_gyro_z_, 0.0);
+            dual_infantry.register_output(
+                "/debug/bottom_board/imu_accel_x", debug_accel_x_, 0.0);
+            dual_infantry.register_output(
+                "/debug/bottom_board/imu_accel_y", debug_accel_y_, 0.0);
+            dual_infantry.register_output(
+                "/debug/bottom_board/imu_accel_z", debug_accel_z_, 0.0);
+            dual_infantry.register_output(
+                "/debug/bottom_board/imu_roll", debug_imu_roll_, 0.0);
+            dual_infantry.register_output(
+                "/debug/bottom_board/imu_pitch", debug_imu_pitch_, 0.0);
+            dual_infantry.register_output("/debug/bottom_board/imu_yaw", debug_imu_yaw_, 0.0);
 
             board_ = std::make_unique<librmcs::board::CBoard>(*this, board_serial);
         }
@@ -321,19 +349,29 @@ private:
         ~BottomBoard() final = default;
 
         void update() {
-            if (const auto snapshot = imu_.snapshot())
-                *chassis_yaw_velocity_imu_ =
-                    imu_gz_velocity_filter_.update(snapshot->gyro_body.z());
+            imu_.update_status();
+            *chassis_yaw_velocity_imu_ = imu_gz_velocity_filter_.update(imu_.gz());
+
+            *debug_gyro_x_ = imu_.gx();
+            *debug_gyro_y_ = imu_.gy();
+            *debug_gyro_z_ = imu_.gz();
+            *debug_accel_x_ = imu_.ax();
+            *debug_accel_y_ = imu_.ay();
+            *debug_accel_z_ = imu_.az();
+
+            const Eigen::Quaterniond chassis_imu_pose{
+                imu_.q0(), imu_.q1(), imu_.q2(), imu_.q3()};
+            const Eigen::Matrix3d chassis_rotation = chassis_imu_pose.toRotationMatrix();
+            *debug_imu_roll_ = std::atan2(chassis_rotation(2, 1), chassis_rotation(2, 2));
+            *debug_imu_pitch_ = std::asin(std::clamp(-chassis_rotation(2, 0), -1.0, 1.0));
+            *debug_imu_yaw_ = std::atan2(chassis_rotation(1, 0), chassis_rotation(0, 0));
 
             gimbal_bottom_yaw_motor_.update_status();
             tf_->set_state<rmcs_description::GimbalCenterLink, rmcs_description::YawLink>(
                 gimbal_bottom_yaw_motor_.angle());
-            fast_tf::rcl::broadcast_all(*tf_);
 
             for (auto& motor : chassis_wheel_motors_)
                 motor.update_status();
-
-            supercap_.update_status();
         }
 
         void command_update() {
@@ -363,8 +401,6 @@ private:
             const auto& can_id = data.can_id;
             if (can_id == gimbal_bottom_yaw_motor_.recv_id()) {
                 gimbal_bottom_yaw_motor_.store_status(data.can_data);
-            } else if (can_id == 0x20c) {
-                supercap_.store_status(data.can_data);
             } else {
                 for (auto& motor : chassis_wheel_motors_)
                     if (motor.match_then_store_status(can_id, data.can_data))
@@ -372,39 +408,29 @@ private:
             }
         }
 
-        void uart_receive_callback(const Spec::Uart& uart, const View::Uart& data) override {
-            if (uart == Spec::kUarts.kUart1) {
-                const auto* uart_data = data.uart_data.data();
-                referee_ring_buffer_receive_.emplace_back_n(
-                    [&uart_data](std::byte* storage) noexcept { *storage = *uart_data++; },
-                    data.uart_data.size());
-            }
-        }
-
         void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-            const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
-            imu_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
+            imu_.store_accelerometer_status(data.x, data.y, data.z);
         }
 
         void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-            const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
-            if (!timestamp.has_value())
-                return;
-            imu_.try_update_with_gyroscope_sample(data.x, data.y, data.z, *timestamp);
+            imu_.store_gyroscope_status(
+                static_cast<int16_t>(data.x - imu_bias_x),
+                static_cast<int16_t>(data.y - imu_bias_y),
+                static_cast<int16_t>(data.z - imu_bias_z));
         }
 
-        device::Bmi088Ekf imu_{device::Bmi088Ekf::Config{}};
-        device::BoardClockLifter board_clock_lifter_;
+        device::LibrmcsBmi088 imu_{};
         OutputInterface<rmcs_description::Tf>& tf_;
 
+        int16_t imu_bias_x = 0, imu_bias_y = 0, imu_bias_z = 0;
+
         OutputInterface<double> chassis_yaw_velocity_imu_;
+        OutputInterface<double> debug_gyro_x_, debug_gyro_y_, debug_gyro_z_;
+        OutputInterface<double> debug_accel_x_, debug_accel_y_, debug_accel_z_;
+        OutputInterface<double> debug_imu_roll_, debug_imu_pitch_, debug_imu_yaw_;
 
         device::DjiMotor gimbal_bottom_yaw_motor_;
         device::DjiMotor chassis_wheel_motors_[4];
-        device::Jsupercap supercap_;
-
-        rmcs_utility::RingBuffer<std::byte> referee_ring_buffer_receive_{256};
-        OutputInterface<rmcs_msgs::SerialInterface> referee_serial_;
 
         filter::LowPassFilter<> imu_gz_velocity_filter_{4.0f, 1000.0f};
 
@@ -415,8 +441,13 @@ private:
 
     rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr gimbal_calibrate_subscription_;
 
+    std::unique_ptr<device::RemoteControl> remote_control_;
+
     std::unique_ptr<TopBoard> top_board_;
     std::unique_ptr<BottomBoard> bottom_board_;
+
+    static constexpr int kTfBroadcastDivider = 10; // 1 kHz control loop -> 100 Hz /tf
+    int tf_broadcast_counter_ = 0;
 };
 
 } // namespace rmcs_core::hardware

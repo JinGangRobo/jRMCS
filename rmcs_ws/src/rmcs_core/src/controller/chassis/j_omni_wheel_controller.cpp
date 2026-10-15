@@ -37,6 +37,7 @@ public:
         get_parameter("wheel_radius", wheel_radius_);
         get_parameter("spinning_bias_adjust", spinning_bias_adjust_);
         get_parameter("spinning_bias_coefficient", spinning_bais_coefficient_);
+        power_limit_default_ = get_parameter_or("power_limit_default", 45.0);
 
         register_input("/chassis/left_front_wheel/max_torque", wheel_motor_max_control_torque_);
 
@@ -52,7 +53,7 @@ public:
         register_input("/chassis/right_back_wheel/alive", right_back_alive_);
 
         register_input("/chassis/control_velocity", chassis_control_velocity_);
-        register_input("/chassis/control_power_limit", power_limit_);
+        register_input("/chassis/control_power_limit", power_limit_, false);
 
         register_input("/gimbal/yaw/angle", gimbal_yaw_angle_, false);
 
@@ -71,6 +72,16 @@ public:
         RCLCPP_INFO(
             get_logger(), "Max control torque of wheel motor: %.f",
             *wheel_motor_max_control_torque_);
+
+        // No referee system and no supercap: fall back to the configured fixed
+        // power limit instead of requiring a producer for the interface.
+        if (!power_limit_.ready()) {
+            RCLCPP_WARN(
+                get_logger(),
+                "Failed to fetch \"/chassis/control_power_limit\", using the fixed %.1f W.",
+                power_limit_default_);
+            power_limit_.make_and_bind_directly(power_limit_default_);
+        }
     }
 
     void update() override {
@@ -131,7 +142,7 @@ private:
         *right_front_control_torque_ = 0.0;
     }
 
-    Eigen::Vector3d calculate_chassis_velocity(const Eigen::Vector4d& wheel_velocities) {
+    Eigen::Vector3d calculate_chassis_velocity(const Eigen::Vector4d& wheel_velocities) const {
         const auto& [w1, w2, w3, w4] = wheel_velocities;
         Eigen::Vector3d velocity;
         velocity.x() = -w1 - w2 + w3 + w4;
@@ -285,6 +296,8 @@ private:
 
     bool spinning_bias_adjust_ = false;
     double spinning_bais_coefficient_ = 0.0;
+
+    double power_limit_default_ = 45.0;
 
     InputInterface<double> wheel_motor_max_control_torque_;
 

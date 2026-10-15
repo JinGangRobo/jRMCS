@@ -5,7 +5,6 @@
 
 #include <eigen3/Eigen/Dense>
 #include <rclcpp/node.hpp>
-#include <rmcs_description/tf_description.hpp>
 #include <rmcs_executor/component.hpp>
 #include <rmcs_msgs/chassis_mode.hpp>
 
@@ -24,12 +23,17 @@ public:
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true))
         , bottom_yaw_velocity_estimator_(0.001, 0.0001, 0.5, 0.01) {
 
+        // 自旋时给 bottom yaw 的提前量（rad），再乘以自旋方向；符号可用 yaml 调。
+        spin_angle_bias_ = get_parameter_or("spin_angle_bias", 0.6);
+        // top yaw 负责的误差额度（rad）：先由它吃这么多，超出部分才交给 bottom。
+        // 越大 → top 越主动、bottom 越少参与（顶级要求 top 比 bottom 快就是靠这个）。
+        top_yaw_limit_ = get_parameter_or("top_yaw_limit", std::numbers::pi / 4.0);
+
         register_input("/gimbal/yaw/control_angle_error", control_angle_error_);
         register_input("/gimbal/yaw/control_angle_shift", control_angle_shift_, false);
         register_input("/gimbal/top_yaw/angle", top_yaw_angle_);
         register_input("/gimbal/yaw/control_angle_velocity", control_angle_velocity_, false);
 
-        register_input("/gimbal/bottom_yaw/angle", bottom_yaw_angle_);
         register_input("/gimbal/yaw/velocity_imu", gimbal_yaw_velocity_imu_);
 
         register_input("/chassis/control_mode", control_mode_);
@@ -65,7 +69,6 @@ public:
     }
 
     void update() override {
-        constexpr double TOP_YAW_LIMIT = std::numbers::pi / 3.0;
         *estimated_bottom_yaw_velocity_ =
             bottom_yaw_velocity_estimator_.update(-*top_yaw_angle_, *gimbal_yaw_velocity_imu_);
 
@@ -77,26 +80,28 @@ public:
 
         } else {
             double e_total = filter::wrap_to_pi(*control_angle_error_);
+            // 双 yaw 协同：bottom 承担持续转动，top 既帮忙又负责把自身收回中位。
+            // e_bot 是"含 top 当前偏角的剩余量"，两个环都朝它收敛 → top 回中、bottom 吃误差。
             double e_bot = filter::wrap_to_pi(e_total + *top_yaw_angle_);
             double e_bot_baised = filter::wrap_to_pi(
-                e_total + *top_yaw_angle_
-                + (rmcs_msgs::is_spining(*control_mode_) ? 0.6 : 0.0)
+                e_bot
+                + (rmcs_msgs::is_spining(*control_mode_) ? spin_angle_bias_ : 0.0)
                       * (*is_spinning_forward_ ? -1.0 : 1.0));
 
-            double top_target = std::clamp(e_bot, -TOP_YAW_LIMIT, TOP_YAW_LIMIT);
-
+            // top 的偏角额度（原为硬编码 45°）：超过就让 bottom 接手，避免顶到走线极限。
+            double top_target = std::clamp(e_bot, -top_yaw_limit_, top_yaw_limit_);
             *top_yaw_target_error_ = filter::wrap_to_pi(top_target - *top_yaw_angle_);
             *bottom_yaw_target_error_ = e_bot_baised;
 
+            // top 的目标转速不再减 estimated_bottom_yaw_velocity（见
+            // BottomYawVelocityEstimator 的 /4 说明）：那个估计值量纲不对，喂给 top 会让它乱冲。
             *bottom_yaw_target_velocity_ = *control_angle_velocity_;
-            *top_yaw_target_velocity_ = *control_angle_velocity_ - *estimated_bottom_yaw_velocity_;
+            *top_yaw_target_velocity_ = *control_angle_velocity_;
         }
 
         if (std::isnan(*control_angle_shift_)) {
-            *top_yaw_control_angle_ = nan_;
             *bottom_yaw_control_angle_shift_ = nan_;
         } else {
-            *top_yaw_control_angle_ = 0.0;
             *bottom_yaw_control_angle_shift_ = *control_angle_shift_;
         }
     }
@@ -105,9 +110,10 @@ private:
     static constexpr double nan_ = std::numeric_limits<double>::quiet_NaN();
 
     InputInterface<double> control_angle_error_, control_angle_shift_;
+    double spin_angle_bias_ = 0.6;
+    double top_yaw_limit_ = std::numbers::pi / 4.0;
     InputInterface<double> top_yaw_angle_;
     InputInterface<double> control_angle_velocity_;
-    InputInterface<double> bottom_yaw_angle_;
     InputInterface<double> gimbal_yaw_velocity_imu_;
     InputInterface<rmcs_msgs::ChassisMode> control_mode_;
     InputInterface<bool> is_spinning_forward_;
@@ -115,7 +121,7 @@ private:
     OutputInterface<double> estimated_bottom_yaw_velocity_;
     OutputInterface<double> top_yaw_target_error_, bottom_yaw_target_error_;
     OutputInterface<double> top_yaw_target_velocity_, bottom_yaw_target_velocity_;
-    OutputInterface<double> top_yaw_control_angle_, bottom_yaw_control_angle_shift_;
+    OutputInterface<double> bottom_yaw_control_angle_shift_;
 
     class DualYawStatus : public rmcs_executor::Component {
     public:
@@ -207,7 +213,7 @@ private:
                 process_model, measurement_model, process_jacobian, measurement_jacobian, Q, R);
         }
 
-        double normalize_angle(double angle) const { // TODO: May cause problem, replace it.
+        static double normalize_angle(double angle) { // TODO: May cause problem, replace it.
             while (angle > std::numbers::pi)
                 angle -= 2 * std::numbers::pi;
             while (angle < -std::numbers::pi)
@@ -215,7 +221,7 @@ private:
             return angle;
         }
 
-        double angle_difference(double target, double current) const {
+        static double angle_difference(double target, double current) {
             return normalize_angle(target - current);
         }
 
@@ -241,16 +247,13 @@ private:
             // EKF预测与更新
             State estimated_state = ekf_->update(measurement, control);
 
-            // 返回平滑处理后的云台绝对速度
-            return estimated_state(1) / 4.0; // TODO: 统一量纲
+            // 状态 1 = (底盘角速度 + bottom 电机角速度)，单位 rad/s。实测几何比值
+            // 0.240，说明这里多除了一个 4，但**不能**简单地去掉：估计器是带滞后的
+            // EKF，放大成真值会直接把 bottom SMC 的 de 项增益放大 4 倍（2026-10-14
+            // 实测：去掉后上电即抖、左右都抖）。要用真值必须重做估计器，再单独整定
+            // bottom 回路，不要和别的改动混在一起。
+            return estimated_state(1) / 4.0; // TODO: 统一量纲（见上面的说明）
         }
-
-        double get_gimbal_absolute_velocity() const { return ekf_->posterior_estimate()(1); }
-        double get_motor_relative_angle() const {
-            return normalize_angle(ekf_->posterior_estimate()(0));
-        }
-
-        void reset() { ekf_->reset(); }
 
     private:
         std::unique_ptr<EKF> ekf_;

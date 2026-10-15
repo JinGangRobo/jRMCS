@@ -26,15 +26,20 @@ public:
     enum class Type : uint8_t { kJ4310 };
 
     enum class ErrorMsg : uint8_t {
+        // Error field of the DM protocol: 0 disabled / 1 enabled / 8 over voltage /
+        // 9 under voltage / 10 over current / 11 MOS over temperature /
+        // 12 rotor over temperature / 13 communication error / 14 overload.
+        // The previous table (0/11/13/15) named the reported errors wrongly and made the
+        // recovery branch in generate_error_command() fire on the wrong condition.
         kDisable = 0,
         kEnable = 1,
-        kUnderVoltage = 0,
         kOverVoltage = 8,
-        kOverCurrent = 11,
-        kMosOverTemperature = 12,
-        kRotorOverTemperature = 13,
-        kCommunicationError = 0xd,
-        kOverload = 15,
+        kUnderVoltage = 9,
+        kOverCurrent = 10,
+        kMosOverTemperature = 11,
+        kRotorOverTemperature = 12,
+        kCommunicationError = 13,
+        kOverload = 14,
     };
 
     struct Config {
@@ -65,6 +70,7 @@ public:
         status_component.register_output(name_prefix + "/torque", torque_output_, 0.0);
         status_component.register_output(name_prefix + "/max_torque", max_torque_output_, 0.0);
         status_component.register_output(name_prefix + "/temperature", temperature_output_, 0.0);
+        status_component.register_output(name_prefix + "/error_code", error_code_output_, 0.0);
         status_component.register_output(name_prefix + "/alive", alive_output_, false);
 
         command_component.register_input(name_prefix + "/control_torque", control_torque_, false);
@@ -128,6 +134,16 @@ public:
             std::bit_cast<DmMotorFeedback>(can_packet_.load(std::memory_order::relaxed));
 
         last_error_msg_ = static_cast<ErrorMsg>((feedback.id_err >> 4) & 0x0F);
+        *error_code_output_ = static_cast<double>(static_cast<uint8_t>(last_error_msg_));
+        // Only log on transitions, so an intermittent error can still be identified.
+        if (last_error_msg_ != reported_error_msg_) {
+            reported_error_msg_ = last_error_msg_;
+            if (last_error_msg_ != ErrorMsg::kEnable && last_error_msg_ != ErrorMsg::kDisable)
+                RCLCPP_WARN(
+                    rclcpp::get_logger("HW_Diag"), "Dm motor %s error: %s (%u)",
+                    name_prefix_.c_str(), error_name(last_error_msg_),
+                    static_cast<unsigned>(last_error_msg_));
+        }
 
         // Temperature unit: celsius
         temperature_ = static_cast<double>(feedback.temp_mos);
@@ -165,7 +181,14 @@ public:
             | feedback.torque_low);
 
         // Velocity unit: rad/s
-        velocity_ = (static_cast<double>(velocity_raw) - 2048.0) / 4096.0 * 60.0;
+        //
+        // The reported velocity has to be flipped for a reversed motor, exactly
+        // like the raw angle above and the torque command below.  Without it the
+        // same motor reports d(angle)/dt and velocity with opposite signs, which
+        // silently turns any velocity loop built on this output into positive
+        // feedback (measured corr = -0.98 against d(angle)/dt on the J4310).
+        velocity_ =
+            (static_cast<double>(velocity_raw) - 2048.0) / 4096.0 * 60.0 * (reversed_ ? -1.0 : 1.0);
 
         // Torque unit: N*m
         torque_ = (static_cast<double>(torque_raw) - 2048.0) / 4096.0 * 20.0;
@@ -246,6 +269,21 @@ public:
     ErrorMsg last_error_msg() const { return last_error_msg_; }
 
 private:
+    static auto error_name(ErrorMsg error) -> const char* {
+        switch (error) {
+        case ErrorMsg::kDisable: return "disabled";
+        case ErrorMsg::kEnable: return "enabled";
+        case ErrorMsg::kOverVoltage: return "over voltage";
+        case ErrorMsg::kUnderVoltage: return "under voltage";
+        case ErrorMsg::kOverCurrent: return "over current";
+        case ErrorMsg::kMosOverTemperature: return "MOS over temperature";
+        case ErrorMsg::kRotorOverTemperature: return "rotor over temperature";
+        case ErrorMsg::kCommunicationError: return "communication error";
+        case ErrorMsg::kOverload: return "overload";
+        }
+        return "unknown";
+    }
+
     static uint16_t float_to_uint(float value, float min, float max, int bits) {
         const float span = max - min;
         if (span <= 0.0f)
@@ -338,6 +376,7 @@ private:
     double temperature_ = 0.0;
     double mos_temperature_ = 0.0;
     ErrorMsg last_error_msg_ = ErrorMsg::kDisable;
+    ErrorMsg reported_error_msg_ = ErrorMsg::kDisable;
 
     std::string name_prefix_;
     std::atomic<CanPacket8> can_packet_;
@@ -351,6 +390,7 @@ private:
     rmcs_executor::Component::OutputInterface<double> torque_output_;
     rmcs_executor::Component::OutputInterface<double> max_torque_output_;
     rmcs_executor::Component::OutputInterface<double> temperature_output_;
+    rmcs_executor::Component::OutputInterface<double> error_code_output_;
     rmcs_executor::Component::OutputInterface<bool> alive_output_;
 
     rmcs_executor::Component::InputInterface<double> control_torque_;

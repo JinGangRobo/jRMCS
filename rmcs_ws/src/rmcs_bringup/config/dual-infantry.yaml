@@ -4,71 +4,112 @@ rmcs_executor:
     components:
       - rmcs_core::hardware::DualInfantry -> dual_infantry_hardware
 
-      - rmcs_core::referee::Status -> referee_status
-      - rmcs_core::referee::Command -> referee_command
-
-      - rmcs_core::referee::command::Interaction -> referee_interaction
-      - rmcs_core::referee::command::interaction::Ui -> referee_ui
-
       - rmcs_core::controller::gimbal::SimpleGimbalController -> gimbal_controller
       - rmcs_core::controller::gimbal::DualYawSolver -> dual_yaw_solver
-      - rmcs_core::controller::gimbal::DualYawController -> dual_yaw_controller
+      - rmcs_core::controller::gimbal::SmcDualYawController -> dual_yaw_controller
       - rmcs_core::controller::pid::ErrorPidController -> pitch_angle_err_pid_controller
       - rmcs_core::controller::pid::PidController -> pitch_velocity_pid_controller
 
       - rmcs_core::controller::shooting::FrictionWheelController -> friction_wheel_controller
-      - rmcs_core::controller::shooting::HeatController -> heat_controller
       - rmcs_core::controller::shooting::BulletFeederController17mm -> bullet_feeder_controller
       - rmcs_core::controller::pid::PidController -> left_friction_velocity_pid_controller
       - rmcs_core::controller::pid::PidController -> right_friction_velocity_pid_controller
       - rmcs_core::controller::pid::PidController -> bullet_feeder_velocity_pid_controller
 
-      - rmcs::AutoAimComponent -> auto_aim_component
-
       - rmcs_core::controller::chassis::ChassisController -> chassis_controller
-      - rmcs_core::controller::chassis::JChassisPowerController -> chassis_power_controller
       - rmcs_core::controller::chassis::JOmniWheelController -> omni_wheel_controller
 
-      - rmcs_core::controller::diagnosis::Diagnosis -> diagnosis
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
 
 value_broadcaster:
   ros__parameters:
+    publish_divider: 10
+
     forward_list:
-      - /gimbal/pitch/control_velocity
-      - /gimbal/pitch/velocity_filtered
-      - /gimbal/pitch/raw_angle
+      - /gimbal/yaw/control_angle_error
+      - /gimbal/top_yaw/target_angle_error
+      - /gimbal/bottom_yaw/target_angle_error
+      - /gimbal/top_yaw/target_angle_velocity
+      - /gimbal/bottom_yaw/target_angle_velocity
+      - /gimbal/bottom_yaw/estimated_velocity
+
+      - /gimbal/yaw/angle
+      - /gimbal/yaw/velocity
+      - /gimbal/top_yaw/angle
+      - /gimbal/top_yaw/raw_angle
+      - /gimbal/top_yaw/velocity
+      - /gimbal/bottom_yaw/angle
       - /gimbal/bottom_yaw/raw_angle
+      - /gimbal/bottom_yaw/velocity
+      - /gimbal/yaw/velocity_imu
+      - /gimbal/pitch/angle
+      - /gimbal/pitch/velocity
+      - /gimbal/pitch/velocity_imu
+      - /gimbal/pitch/raw_angle
+      - /gimbal/pitch/velocity_filtered
+
+      - /gimbal/top_yaw/control_torque
+      - /gimbal/bottom_yaw/control_torque
+      - /gimbal/pitch/control_velocity
       - /gimbal/pitch/control_torque
       - /gimbal/pitch/control_angle_error
-      - /debug/solver/pitch
-      - /gimbal/pitch/velocity_imu
-      - /debug/pitch/filtered_velocity_imu
-      - /debug/solver/set_dir_angle
-      - /chassis/power
-      - /chassis/supercap/voltage
-      - /chassis/angular_vmax
-      - /chassis/translational_vmax
       - /debug/sliding_value
+
+      - /debug/top_board/imu_accel_x
+      - /debug/top_board/imu_accel_y
+      - /debug/top_board/imu_accel_z
+      - /debug/top_board/imu_gyro_x
+      - /debug/top_board/imu_gyro_y
+      - /debug/top_board/imu_gyro_z
+      - /debug/top_board/imu_roll
+      - /debug/top_board/imu_pitch
+      - /debug/top_board/imu_yaw
+      - /debug/bottom_board/imu_gyro_x
+      - /debug/bottom_board/imu_gyro_y
+      - /debug/bottom_board/imu_gyro_z
+      - /debug/bottom_board/imu_accel_x
+      - /debug/bottom_board/imu_accel_y
+      - /debug/bottom_board/imu_accel_z
+      - /debug/bottom_board/imu_roll
+      - /debug/bottom_board/imu_pitch
+      - /debug/bottom_board/imu_yaw
+      - /gimbal/pitch/error_code
+
+      - /chassis/angle
+      - /chassis/control_angle
+      - /chassis/yaw/velocity_imu
+      - /chassis/debug/spinning_bias
 
 dual_infantry_hardware:
   ros__parameters:
-    board_serial_top_board: "placeholder-top"
-    board_serial_bottom_board: "placeholder-bottom"
-    bottom_yaw_motor_zero_point: 6705
-    top_yaw_motor_zero_point: 7850
-    pitch_motor_zero_point: 35030
+
+    board_serial_top_board: "D4-2EEA-E236-F8E4-62C8-9974-F3A5"
+    board_serial_bottom_board: "D4-7C74-3B6F-7B82-B341-E573-0470"
+
+    bottom_yaw_motor_zero_point: 2687
+    top_yaw_motor_zero_point: 7916
+    pitch_motor_zero_point: 29364
 
     imu_bias_x: 3
     imu_bias_y: 8
     imu_bias_z: 2
 
+    imu_bias_fine_x: -0.008371
+    imu_bias_fine_y: 0.002737
+    imu_bias_fine_z: 0.002742
+
+    imu_bias_bottom_x: 0
+    imu_bias_bottom_y: 0
+    imu_bias_bottom_z: 0
+
+    imu_startup_calibration_samples: 1000
+
 gimbal_controller:
   ros__parameters:
     shift_control_clamp: 0.0045
 
-    upper_limit: -0.28
-    lower_limit: 0.35
+    upper_limit: -0.36
+    lower_limit: 0.66
 
     joystick_left_bias_y: 0.0
     joystick_left_bias_x: 0.0
@@ -78,46 +119,60 @@ gimbal_controller:
       - /gimbal/top_yaw
       - /gimbal/bottom_yaw
 
+    yaw_upper_limit: 1000000.0
+    yaw_lower_limit: -1000000.0
+
 dual_yaw_controller:
   ros__parameters:
-    top_yaw_angle_kp: 15.0
+    top_yaw_angle_kp: 18.0
     top_yaw_angle_ki: 0.0
     top_yaw_angle_kd: 0.0
-    top_yaw_velocity_kp: 2.0
-    top_yaw_velocity_ki: 0.01
+    top_yaw_angle_output_min: -6.0
+    top_yaw_angle_output_max: 6.0
+    top_yaw_velocity_kp: 1.0
+    top_yaw_velocity_ki: 0.0
     top_yaw_velocity_kd: 0.0
-
-    bottom_yaw_smc_c: 10.0
+    top_yaw_velocity_output_min: -1.5
+    top_yaw_velocity_output_max: 1.5
+    bottom_yaw_smc_c: 3.0
     bottom_yaw_smc_k: 1.5
-    bottom_yaw_smc_epsilon: 1.0
-    bottom_yaw_smc_phi: 2.0
-    bottom_yaw_inertia: 2.0
+    bottom_yaw_smc_epsilon: 0.3
+    bottom_yaw_smc_phi: 0.1
+    bottom_yaw_inertia: 0.5
 
-    bottom_yaw_max_torque: 16384.0
+    bottom_yaw_max_torque: 2.0
+    bottom_yaw_accel_ff_alpha: 0.3
+    top_yaw_angle_limit: 0.9
+
+dual_yaw_solver:
+  ros__parameters:
+    top_yaw_limit: 0.7854
+    spin_angle_bias: 0.0
 
 chassis_controller:
   ros__parameters:
-    translational_velocity_limit: 99.0
-    angular_velocity_limit: 25.0
-    autopilot_spin_velocity_default: 2.0
+
+    translational_velocity_max: 80.0
+    angular_velocity_max: 15.0
 
 omni_wheel_controller:
   ros__parameters:
+    mass: 15.0
+    moment_of_inertia: 4.08
     chassis_radius_x: 0.165
     chassis_radius_y: 0.165
-    wheel_radius_: 0.07
-    friction_coefficient: 0.6
-
-    spinning_bais_coefficient: -0.08
+    wheel_radius: 0.07
+    spinning_bias_adjust: false
+    spinning_bias_coefficient: -0.08
+    power_limit_default: 45.0
 
 pitch_angle_err_pid_controller:
   ros__parameters:
     measurement: /gimbal/pitch/control_angle_error
     control: /gimbal/pitch/control_velocity
-    enable: /gimbal/pitch/alive
-    kp: 8.0
-    ki: 0.001
-    kd: 1.0
+    kp: 6.0
+    ki: 0.0
+    kd: 60.0
     integral_min: -5.0
     integral_max: 5.0
 
@@ -126,12 +181,11 @@ pitch_velocity_pid_controller:
     measurement: /gimbal/pitch/velocity_imu
     setpoint: /gimbal/pitch/control_velocity
     control: /gimbal/pitch/control_torque
-    enable: /gimbal/pitch/alive
-    kp: 2.5
-    ki: 0.05
-    kd: 45.0
-    integral_min: -25.0
-    integral_max: 25.0
+    kp: 1.2
+    ki: 0.0
+    kd: 15.0
+    integral_min: -2.0
+    integral_max: 2.0
 
 friction_wheel_controller:
   ros__parameters:
@@ -143,11 +197,6 @@ friction_wheel_controller:
       - 600.0
     friction_soft_start_stop_time: 1.0
 
-heat_controller:
-  ros__parameters:
-    heat_per_shot: 10000
-    reserved_heat: 20000
-
 bullet_feeder_controller:
   ros__parameters:
     bullets_per_feeder_turn: 8.0
@@ -158,6 +207,7 @@ bullet_feeder_controller:
     deep_eject_frequency: 15.0
     deep_eject_time: 0.20
     single_shot_max_stop_delay: 2.0
+    bullet_allowance_default: 100
 
 left_friction_velocity_pid_controller:
   ros__parameters:
@@ -179,26 +229,9 @@ right_friction_velocity_pid_controller:
 
 bullet_feeder_velocity_pid_controller:
   ros__parameters:
-    measurement: /gimbal/bullet_feeder/velocity_filtered
+    measurement: /gimbal/bullet_feeder/velocity
     setpoint: /gimbal/bullet_feeder/control_velocity
     control: /gimbal/bullet_feeder/control_torque
-    kp: 5.0
+    kp: 0.0
     ki: 0.0
-    kd: 50.0
-
-diagnosis:
-  ros__parameters:
-    motors:
-      - /gimbal/pitch
-      - /gimbal/top_yaw
-      - /gimbal/bottom_yaw
-      - /gimbal/left_friction
-      - /gimbal/right_friction
-      - /gimbal/bullet_feeder
-      - /chassis/left_front_wheel
-      - /chassis/right_front_wheel
-      - /chassis/left_back_wheel
-      - /chassis/right_back_wheel
-
-    enable_motor_check: true
-    enable_supercap_check: true
+    kd: 0.0

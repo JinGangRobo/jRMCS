@@ -61,6 +61,7 @@ public:
         , velocity_(0.0)
         , torque_(0.0) {
         status_component.register_output(name_prefix + "/angle", angle_output_, 0.0);
+        status_component.register_output(name_prefix + "/raw_angle", raw_angle_output_, 0.0);
         status_component.register_output(name_prefix + "/velocity", velocity_output_, 0.0);
         status_component.register_output(name_prefix + "/torque", torque_output_, 0.0);
         status_component.register_output(name_prefix + "/max_torque", max_torque_output_, 0.0);
@@ -220,6 +221,7 @@ public:
         }
 
         *angle_output_ = angle();
+        *raw_angle_output_ = static_cast<double>(last_raw_angle());
         *velocity_output_ = velocity();
         *torque_output_ = torque();
     }
@@ -291,6 +293,7 @@ private:
     double temperature_;
 
     rmcs_executor::Component::OutputInterface<double> angle_output_;
+    rmcs_executor::Component::OutputInterface<double> raw_angle_output_;
     rmcs_executor::Component::OutputInterface<double> velocity_output_;
     rmcs_executor::Component::OutputInterface<double> torque_output_;
     rmcs_executor::Component::OutputInterface<double> max_torque_output_;

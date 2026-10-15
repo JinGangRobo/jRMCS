@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <cstddef>
+
 #include <rclcpp/node.hpp>
 #include <rclcpp/parameter_event_handler.hpp>
 #include <rmcs_executor/component.hpp>
@@ -13,10 +16,14 @@ public:
     ValueBroadcaster()
         : Node{get_component_name()} {
         declare_parameter<std::vector<std::string>>("forward_list", std::vector<std::string>{});
+        declare_parameter<int>("publish_divider", 1);
         parameter_subscriber_ = std::make_unique<rclcpp::ParameterEventHandler>(this);
         parameter_callback_ = parameter_subscriber_->add_parameter_callback(
             "forward_list",
             [this](const rclcpp::Parameter& para) { update_forward_list(para.as_string_array()); });
+        divider_callback_ = parameter_subscriber_->add_parameter_callback(
+            "publish_divider",
+            [this](const rclcpp::Parameter& para) { set_publish_divider(para.as_int()); });
     }
 
     void before_pairing(const OutputInfoMap& output_map) override {
@@ -32,14 +39,33 @@ public:
         std::vector<std::string> forward_list;
         if (get_parameter("forward_list", forward_list))
             update_forward_list(forward_list);
+
+        int publish_divider = 1;
+        if (get_parameter("publish_divider", publish_divider))
+            set_publish_divider(publish_divider);
     }
 
     void update() override {
+        // Every forwarded output would otherwise be published on every executor
+        // tick (1 kHz with the current update rate).  That is 40k DDS messages
+        // per second for the dual infantry telemetry, which is far more than any
+        // remote consumer can drain: a slow (e.g. Python) subscriber ends up
+        // back-pressuring the reliable publisher and slowing the whole 1 kHz
+        // executor down.  A configurable divider keeps the telemetry useful for
+        // plotting and offline analysis without disturbing the control loop.
+        if (publish_counter_++ % publish_divider_ != 0)
+            return;
+
         for (auto& [name, unit] : forward_units_)
             unit->update();
     }
 
 private:
+    void set_publish_divider(int divider) {
+        publish_divider_ = std::max(divider, 1);
+        publish_counter_ = 0;
+    }
+
     void update_forward_list(const std::vector<std::string>& forward_list) {
         for (auto& [name, unit] : forward_units_)
             unit->active = false;
@@ -89,7 +115,14 @@ private:
 
         void activate(rclcpp::Node* node) override {
             if (!publisher_)
-                publisher_ = node->create_publisher<RosT>(name_, rclcpp::QoS{5}.reliable());
+                // Telemetry, not a control path: best effort is the right QoS.
+                // With `reliable` + a shallow history the writer silently
+                // overwrites samples that the reader has not acknowledged yet
+                // (measured 2026-10-13: only ~73 of 100 published samples per
+                // second reached a Python subscriber), and a stuck subscriber
+                // can additionally back-pressure the 1 kHz executor through the
+                // blocking publish.  Best effort removes both.
+                publisher_ = node->create_publisher<RosT>(name_, rclcpp::QoS{5}.best_effort());
         }
 
         void update() override {
@@ -113,6 +146,10 @@ private:
 
     std::unique_ptr<rclcpp::ParameterEventHandler> parameter_subscriber_;
     std::shared_ptr<rclcpp::ParameterCallbackHandle> parameter_callback_;
+    std::shared_ptr<rclcpp::ParameterCallbackHandle> divider_callback_;
+
+    int publish_divider_ = 1;
+    std::size_t publish_counter_ = 0;
 };
 
 } // namespace rmcs_core::broadcaster
