@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <functional>
-#include <utility>
 
 #include <eigen3/Eigen/Dense>
 
@@ -18,7 +17,7 @@ class KalmanFilter {
     using Control = Eigen::Vector<double, control>;
 
 public:
-    KalmanFilter() = default;
+    KalmanFilter() {}
 
     KalmanFilter(
         const Matrix<state>& A, const Matrix<measure, state>& H, const Matrix<state>& Q,
@@ -102,10 +101,10 @@ public:
     ExtendedKalmanFilter(
         ProcessModel f, MeasurementModel h, ProcessJacobian F, MeasurementJacobian H,
         const Matrix<state>& Q, const Matrix<measure>& R)
-        : process_model_(std::move(f))
-        , measurement_model_(std::move(h))
-        , process_jacobian_(std::move(F))
-        , measurement_jacobian_(std::move(H))
+        : process_model_(f)
+        , measurement_model_(h)
+        , process_jacobian_(F)
+        , measurement_jacobian_(H)
         , process_noise_covariance_(Q)
         , measurement_noise_covariance_(R) {
         reset();

@@ -1,12 +1,9 @@
 <library path="rmcs_core">
-  <class type="rmcs_core::hardware::Flight" base_class_type="rmcs_executor::Component" />
-  <class type="rmcs_core::hardware::SteeringHeroLittle" base_class_type="rmcs_executor::Component" />
-  <class type="rmcs_core::hardware::OmniInfantry" base_class_type="rmcs_executor::Component" />
-  <class type="rmcs_core::hardware::DeformableInfantryOmni" base_class_type="rmcs_executor::Component" />
-  <class type="rmcs_core::hardware::DeformableInfantryOmniB" base_class_type="rmcs_executor::Component" />
-  <class type="rmcs_core::hardware::Sentry" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::DualInfantry" base_class_type="rmcs_executor::Component" />
-  
+  <class type="rmcs_core::hardware::DualSentry" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::hardware::Hero" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::hardware::MiniInfantry" base_class_type="rmcs_executor::Component" />
+
   <class type="rmcs_core::hardware::Px4VisionBridge" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::chassis::ChassisController" base_class_type="rmcs_executor::Component" />
@@ -24,6 +21,8 @@
   <class type="rmcs_core::controller::chassis::DeformableChassis" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::chassis::DeformableSuspension" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::chassis::DeformableJointController" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::controller::chassis::JChassisPowerController" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::controller::chassis::JOmniWheelController" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::gimbal::SimpleGimbalController" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::gimbal::HeroGimbalController" base_class_type="rmcs_executor::Component" />
@@ -48,6 +47,8 @@
   <class type="rmcs_core::controller::pid::FrictionWheelPidRecorder" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::adrc::AdrcController" base_class_type="rmcs_executor::Component" />
+
+  <class type="rmcs_core::controller::diagnosis::Diagnosis" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::broadcaster::TfBroadcaster" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::broadcaster::ValueBroadcaster" base_class_type="rmcs_executor::Component" />

@@ -19,4 +19,5 @@ _remote_hosts() {
 }
 
 _arguments \
-  '1:Remote host address:_remote_hosts'
+  '1:Remote host address:_remote_hosts' \
+  '--arch=[Target architecture of the remote host]:arch:(arm64 amd64)'

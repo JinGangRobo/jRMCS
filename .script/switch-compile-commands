@@ -1,0 +1,296 @@
+#!/bin/bash
+
+set -euo pipefail
+
+: "${RMCS_PATH:=/workspaces/RMCS}"
+
+WS="${RMCS_PATH}/rmcs_ws"
+LINK="${WS}/compile_commands.json"
+CANONICAL_NAME="compile_commands.json"
+
+usage() {
+    cat <<'EOF'
+Usage: switch-compile-commands [<id>|none|restore|status]
+
+Switch the clangd compile_commands.json database for the RMCS workspace.
+
+Every build directory keeps its database under a non-canonical "storage" name
+so clangd cannot discover an unexpected file. The selected database is exposed
+through the root symlink:
+
+  <RMCS_PATH>/rmcs_ws/compile_commands.json
+
+Discoverable databases (auto-detected):
+  native  ->  rmcs_ws/build/compile_commands.native.json
+  <arch>  ->  rmcs_ws/build-cross-<arch>/compile_commands.<arch>.json
+
+Arguments:
+  <id>        Activate the database for <id>
+  none        Remove the root symlink
+  restore     Rename every storage file back to compile_commands.json and
+              remove the root symlink
+  status      Show the discovered databases and the current root symlink
+  (no args)   Interactive selection on a TTY, otherwise status
+  -h, --help  Show this help
+
+Examples:
+  switch-compile-commands native
+  switch-compile-commands arm64
+  switch-compile-commands restore
+EOF
+}
+
+error() {
+    echo "> ERROR: $*" >&2
+}
+
+storage_path() {
+    local build_dir="$1" id="$2"
+    echo "${build_dir}/compile_commands.${id}.json"
+}
+
+build_dir_for_id() {
+    local id="$1"
+    if [[ "$id" == "native" ]]; then
+        echo "${WS}/build"
+    else
+        echo "${WS}/build-cross-${id}"
+    fi
+}
+
+# Print the ids of every discovered database, native first.
+discover_ids() {
+    local dir id
+    if [[ -d "${WS}/build" ]]; then
+        echo "native"
+    fi
+    for dir in "${WS}"/build-cross-*; do
+        [[ -d "$dir" ]] || continue
+        id="${dir##*/build-cross-}"
+        echo "$id"
+    done
+}
+
+# Ensure the freshly built canonical file is moved to its storage name so
+# clangd cannot find it by its canonical name.
+promote_one() {
+    local build_dir="$1" id="$2"
+    local canonical="${build_dir}/${CANONICAL_NAME}"
+    local storage
+    storage="$(storage_path "$build_dir" "$id")"
+
+    if [[ -L "$canonical" ]]; then
+        error "${canonical} 是软链接，跳过改名（请手动检查）。"
+        return 0
+    fi
+    if [[ -f "$canonical" ]]; then
+        mv -f -- "$canonical" "$storage"
+    fi
+}
+
+promote_all() {
+    local id build_dir
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        build_dir="$(build_dir_for_id "$id")"
+        promote_one "$build_dir" "$id"
+    done < <(discover_ids)
+}
+
+select_id() {
+    local id="$1"
+    local build_dir storage
+
+    build_dir="$(build_dir_for_id "$id")"
+    if [[ ! -d "$build_dir" ]]; then
+        error "未发现构建目录: ${build_dir}"
+        echo ">        请先运行对应的构建命令（build-rmcs 或 build-rmcs-cross --target-arch ${id}）。" >&2
+        exit 1
+    fi
+
+    promote_all
+
+    storage="$(storage_path "$build_dir" "$id")"
+    if [[ ! -f "$storage" ]]; then
+        error "数据库不存在: ${storage}"
+        echo ">        请先构建该配置后再切换。" >&2
+        exit 1
+    fi
+    if [[ -e "$LINK" && ! -L "$LINK" ]]; then
+        error "${LINK} 已存在且不是软链接，拒绝覆盖。"
+        exit 1
+    fi
+
+    ln -sfn -- "$storage" "$LINK"
+    echo "> 已启用 [${id}]: ${LINK} -> ${storage}"
+}
+
+disable() {
+    if [[ -L "$LINK" ]]; then
+        rm -f -- "$LINK"
+        echo "> 已移除根链接: ${LINK}"
+    elif [[ -e "$LINK" ]]; then
+        error "${LINK} 已存在且不是软链接，拒绝删除。"
+        exit 1
+    else
+        echo "> 根链接不存在: ${LINK}"
+    fi
+}
+
+restore_all() {
+    local id build_dir storage canonical
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        build_dir="$(build_dir_for_id "$id")"
+        storage="$(storage_path "$build_dir" "$id")"
+        canonical="${build_dir}/${CANONICAL_NAME}"
+
+        [[ -f "$storage" ]] || continue
+        if [[ -f "$canonical" ]]; then
+            echo "> 保留较新的 canonical，移除存储文件: ${storage}"
+            rm -f -- "$storage"
+        else
+            mv -f -- "$storage" "$canonical"
+            echo "> 已还原: ${canonical}"
+        fi
+    done < <(discover_ids)
+
+    disable
+}
+
+status() {
+    local target id build_dir storage canonical state mark found
+    target="$(readlink -f -- "$LINK" 2>/dev/null || true)"
+
+    if [[ -L "$LINK" ]]; then
+        echo "根链接: ${LINK} -> $(readlink -- "$LINK")"
+    elif [[ -e "$LINK" ]]; then
+        echo "根链接: ${LINK} (普通文件，非软链接)"
+    else
+        echo "根链接: ${LINK} (不存在)"
+    fi
+    echo
+
+    found=0
+    printf '%-10s %-40s %-10s %-10s\n' "ID" "构建目录" "存储" "canonical"
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        found=1
+        build_dir="$(build_dir_for_id "$id")"
+        storage="$(storage_path "$build_dir" "$id")"
+        canonical="${build_dir}/${CANONICAL_NAME}"
+
+        mark=""
+        if [[ -n "$target" && "$target" == "$(readlink -f -- "$storage" 2>/dev/null || true)" ]]; then
+            mark="  当前"
+        fi
+
+        if [[ -f "$storage" ]]; then
+            state="存在"
+        else
+            state="缺失"
+        fi
+        printf '%-10s %-40s %-10s %-10s%s\n' \
+            "$id" "$build_dir" "$state" \
+            "$([[ -f "$canonical" ]] && echo 存在 || echo 无)" "$mark"
+    done < <(discover_ids)
+
+    if ((found == 0)); then
+        echo "(未发现任何 build / build-cross-* 目录)"
+    fi
+}
+
+interactive() {
+    local -a ids
+    local id build_dir storage i choice
+    mapfile -t ids < <(discover_ids)
+
+    if ((${#ids[@]} == 0)); then
+        error "未发现任何 build / build-cross-* 目录。"
+        exit 1
+    fi
+
+    echo "可用数据库:"
+    for i in "${!ids[@]}"; do
+        id="${ids[$i]}"
+        build_dir="$(build_dir_for_id "$id")"
+        storage="$(storage_path "$build_dir" "$id")"
+        if [[ -f "$storage" ]]; then
+            printf '  %d) %-8s %s\n' "$((i + 1))" "$id" "$storage"
+        else
+            printf '  %d) %-8s (需先构建: %s)\n' "$((i + 1))" "$id" "$build_dir"
+        fi
+    done
+
+    read -r -p "选择要启用的数据库编号 (q 取消): " choice
+    case "$choice" in
+    q | Q | "")
+        echo "> 已取消"
+        return 0
+        ;;
+    esac
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || ((choice < 1 || choice > ${#ids[@]})); then
+        error "无效选择: ${choice}"
+        exit 1
+    fi
+
+    select_id "${ids[$((choice - 1))]}"
+}
+
+main() {
+    if [[ ! -d "$WS" ]]; then
+        error "工作区不存在: ${WS}"
+        exit 1
+    fi
+
+    if (($# == 0)); then
+        if [[ -t 0 && -t 1 ]]; then
+            interactive
+        else
+            status
+        fi
+        return 0
+    fi
+
+    case "$1" in
+    -h | --help)
+        usage
+        ;;
+    status)
+        (($# == 1)) || {
+            error "status 不接受额外参数。"
+            exit 1
+        }
+        status
+        ;;
+    none)
+        (($# == 1)) || {
+            error "none 不接受额外参数。"
+            exit 1
+        }
+        disable
+        ;;
+    restore)
+        (($# == 1)) || {
+            error "restore 不接受额外参数。"
+            exit 1
+        }
+        restore_all
+        ;;
+    -*)
+        error "未知选项: $1"
+        usage
+        exit 1
+        ;;
+    *)
+        (($# == 1)) || {
+            error "参数过多: $*"
+            usage
+            exit 1
+        }
+        select_id "$1"
+        ;;
+    esac
+}
+
+main "$@"

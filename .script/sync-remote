@@ -1,16 +1,21 @@
 #!/bin/python3
 
-import socket
-import selectors
 import os
+import platform
+import re
+import selectors
+import socket
 import subprocess
+import sys
 
 from colorama import Fore, Style
 
 
 RMCS_PATH = os.getenv("RMCS_PATH") or "/workspaces/RMCS"
-SRC_DIR = os.path.join(RMCS_PATH, "rmcs_ws", "install")
+INSTALL_DIR = os.path.join(RMCS_PATH, "rmcs_ws", "install")
+BUILD_DIR = os.path.join(RMCS_PATH, "rmcs_ws", "build")
 DST_DIR = "ssh://remote//rmcs_install"
+DST_BUILD_DIR = "ssh://remote//rmcs_build"
 SOCKET_PATH = "/tmp/sync-remote"
 
 SYNC_FLAG = b"Nothing to do:"
@@ -18,8 +23,41 @@ COLORED_SYNC_FLAG = (
     f"{Fore.LIGHTGREEN_EX}{Style.BRIGHT}Nothing to do{Style.RESET_ALL}:".encode("ascii")
 )
 
+_ARCH_MAP = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+}
 
-def create_process():
+
+def _print_usage():
+    cross_dir = os.path.join(RMCS_PATH, "rmcs_ws", "install-cross-<arch>")
+    cross_build_dir = os.path.join(RMCS_PATH, "rmcs_ws", "build-cross-<arch>")
+    print(f"""
+Usage: sync-remote [--target-arch <arm64|amd64>] [--with-build]
+
+Synchronize the local install directory to the remote /rmcs_install.
+
+The source directory is selected from the target architecture stored in
+~/.ssh/config (Host remote, "# RMCS_TARGET_ARCH=<arch>"):
+
+  target == local arch : {INSTALL_DIR}
+  target != local arch : {cross_dir}
+
+Options:
+  --target-arch <arm64|amd64>  Override the configured target architecture.
+  --with-build                 Also sync the build directory to the remote
+                               /rmcs_build ({BUILD_DIR} or {cross_build_dir}).
+                               This is only needed for special cases such as
+                               remote debugging (object files,
+                               compile_commands.json); normal deployment does
+                               not require it, because unison follows the
+                               symlinks created by symlink-install.
+""")
+
+
+def create_process(src_dir, dst_dir):
     command = [
         "unison",
         "-ignorearchives",
@@ -28,10 +66,10 @@ def create_process():
         "-repeat",
         "watch",
         "-times",
-        SRC_DIR,
-        DST_DIR,
+        src_dir,
+        dst_dir,
         "-force",
-        SRC_DIR,
+        src_dir,
         "-follow",
         "Name *",
     ]
@@ -65,11 +103,147 @@ def finish_connection(conn: socket):
         conn.close()
 
 
+def _local_arch():
+    return _ARCH_MAP.get(platform.machine().lower())
+
+
+def _read_target_arch():
+    try:
+        with open(os.path.expanduser("~/.ssh/config")) as f:
+            config = f.read()
+    except FileNotFoundError:
+        return None
+
+    block = re.search(r"Host remote\n(?:(?!Host ).+\n)*", config)
+    if not block:
+        return None
+
+    match = re.search(r"#[ \t]*RMCS_TARGET_ARCH=(\S+)", block.group(0))
+    return match.group(1) if match else None
+
+
+def _parse_args(argv):
+    explicit = None
+    with_build = False
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            _print_usage()
+            sys.exit(0)
+        if arg == "--with-build":
+            with_build = True
+            i += 1
+            continue
+        if arg == "--target-arch":
+            if i + 1 >= len(argv):
+                sys.exit(
+                    "Error: --target-arch requires a value (arm64 or amd64)."
+                )
+            explicit = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--target-arch="):
+            explicit = arg[len("--target-arch=") :]
+        else:
+            sys.exit(f"Error: Unknown argument '{arg}'.")
+        i += 1
+
+    if explicit is not None and explicit not in ("arm64", "amd64"):
+        sys.exit(f"Error: Unsupported arch '{explicit}'. Use arm64 or amd64.")
+
+    if explicit is not None:
+        return explicit, with_build
+
+    target = _read_target_arch()
+    if target is None:
+        return None, with_build
+    if target not in ("arm64", "amd64"):
+        print(
+            "Warning: ignoring invalid RMCS_TARGET_ARCH="
+            f"'{target}' in ~/.ssh/config.",
+            file=sys.stderr,
+        )
+        return None, with_build
+    return target, with_build
+
+
+def _resolve_src_dirs(target_arch):
+    local_arch = _local_arch()
+
+    if target_arch is None:
+        print(
+            "Warning: no RMCS_TARGET_ARCH configured for 'remote' in "
+            "~/.ssh/config; syncing the native install directory. "
+            "Run 'set-remote <remote_host> --arch <arm64|amd64>' to set it.",
+            file=sys.stderr,
+        )
+        return INSTALL_DIR, BUILD_DIR, local_arch
+
+    if local_arch is None:
+        print(
+            "Warning: could not detect the local architecture; assuming it "
+            f"differs from the target '{target_arch}'.",
+            file=sys.stderr,
+        )
+
+    if target_arch == local_arch:
+        return INSTALL_DIR, BUILD_DIR, local_arch
+
+    install_dir = os.path.join(RMCS_PATH, "rmcs_ws", f"install-cross-{target_arch}")
+    build_dir = os.path.join(RMCS_PATH, "rmcs_ws", f"build-cross-{target_arch}")
+    return install_dir, build_dir, local_arch
+
+
+def _require_src_dir(src_dir, target_arch, local_arch, label="install"):
+    if os.path.isdir(src_dir):
+        return
+
+    lines = [f"Error: sync {label} source not found: {src_dir}"]
+    if target_arch is None:
+        lines.append("  Build the workspace or set the arch first: build-rmcs")
+    else:
+        other = "amd64" if target_arch == "arm64" else "arm64"
+        lines.append(
+            f"  Target arch is {target_arch} (local arch: {local_arch}) "
+            "but it has not been built."
+        )
+        lines.append(f"  Run: build-rmcs-cross --target-arch {target_arch}")
+        lines.append(
+            "  Or change the target arch: "
+            f"set-remote <remote_host> --arch {other}"
+        )
+    sys.exit("\n".join(lines))
+
+
 def main():
+    target_arch, with_build = _parse_args(sys.argv[1:])
+    install_dir, build_dir, local_arch = _resolve_src_dirs(target_arch)
+    _require_src_dir(install_dir, target_arch, local_arch)
+    if with_build:
+        _require_src_dir(build_dir, target_arch, local_arch, label="build")
+
+    pairs = [(install_dir, DST_DIR)]
+    if with_build:
+        pairs.append((build_dir, DST_BUILD_DIR))
+
+    for src_dir, dst_dir in pairs:
+        print(
+            f"Syncing {src_dir} -> {dst_dir} "
+            f"(target: {target_arch or 'native'}, local: {local_arch or 'unknown'}).",
+            flush=True,
+        )
+
     selector = selectors.DefaultSelector()
 
-    process, pipe_stdout = create_process()
-    selector.register(pipe_stdout, selectors.EVENT_READ, data=None)
+    processes = {}
+    idle = {}
+    for src_dir, dst_dir in pairs:
+        process, pipe_stdout = create_process(src_dir, dst_dir)
+        selector.register(pipe_stdout, selectors.EVENT_READ, data=None)
+        processes[pipe_stdout] = process
+        idle[pipe_stdout] = False
 
     server = create_server()
     selector.register(server, selectors.EVENT_READ, data=None)
@@ -88,24 +262,39 @@ def main():
                     else:
                         clients.append(conn)
                 else:
+                    pipe_stdout = key.fileobj
                     stdout = os.read(pipe_stdout, 1024)
+                    if not stdout:
+                        # The child closed its pipe; stop watching it.
+                        selector.unregister(pipe_stdout)
+                        del processes[pipe_stdout]
+                        idle.pop(pipe_stdout, None)
+                        continue
                     if stdout.startswith(SYNC_FLAG):
-                        ready = True
                         stdout = COLORED_SYNC_FLAG + stdout[len(SYNC_FLAG) :]
+                        idle[pipe_stdout] = True
+                    else:
+                        idle[pipe_stdout] = False
+                    os.write(1, stdout)
+
+                    new_ready = bool(idle) and all(idle.values())
+                    if new_ready and not ready:
                         for conn in clients:
                             finish_connection(conn)
                         clients = []
-                    else:
-                        ready = False
-                    os.write(1, stdout)
-            if process.poll() is not None:
+                    ready = new_ready
+            if not processes or all(
+                process.poll() is not None for process in processes.values()
+            ):
                 break
     except KeyboardInterrupt:
         try:
-            process.wait()
+            for process in processes.values():
+                process.wait()
         except KeyboardInterrupt:
             print("SIGINT sent twice, force quitting.")
-            process.kill()
+            for process in processes.values():
+                process.kill()
     finally:
         server.close()
         selector.close()

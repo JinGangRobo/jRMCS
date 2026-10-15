@@ -236,7 +236,7 @@ private:
         return result;
     }
 
-    static Eigen::Vector4d calculate_wheel_control_torques(
+    Eigen::Vector4d calculate_wheel_control_torques(
         ChassisControlTorque chassis_control_torque, Eigen::Vector4d wheel_pid_torques) {
         auto& [lambda_1, lambda_2] = chassis_control_torque.lambda;
         Eigen::Vector2d reference_torque =
