@@ -15,17 +15,22 @@ class ImuEkf {
 public:
     using Vec3 = Eigen::Vector3d;
     using Vec4 = Eigen::Vector4d;
+    using Vec6 = Eigen::Matrix<double, 6, 1>;
     using Mat3 = Eigen::Matrix3d;
     using Mat4 = Eigen::Matrix4d;
+    using Mat6 = Eigen::Matrix<double, 6, 6>;
+    using Mat36 = Eigen::Matrix<double, 3, 6>;
     using Mat43 = Eigen::Matrix<double, 4, 3>;
-    using Mat34 = Eigen::Matrix<double, 3, 4>;
+    using Mat63 = Eigen::Matrix<double, 6, 3>;
 
     struct Config {
         Mat3 process_noise = 1.22e-3 * Mat3::Identity();
+        double bias_process_noise = 1.0e-3;
         Mat3 measurement_noise = 50.0 * Mat3::Identity();
         Mat3 gate_noise = 0.02 * Mat3::Identity();
 
         Mat4 initial_covariance = 0.15 * Mat4::Identity();
+        double initial_bias_variance = 1.0e-3;
     };
 
     class AccelCorrection {
@@ -36,7 +41,7 @@ public:
         friend class ImuEkf;
 
         AccelCorrection(
-            const std::uint64_t revision, Vec3 innovation, Mat34 jacobian_h_x,
+            const std::uint64_t revision, Vec3 innovation, Mat36 jacobian_h_x,
             Eigen::LDLT<Mat3> innovation_covariance_ldlt, const double chi_square)
             : revision_(revision)
             , innovation_(std::move(innovation))
@@ -46,7 +51,7 @@ public:
 
         std::uint64_t revision_ = 0;
         Vec3 innovation_ = Vec3::Zero();
-        Mat34 jacobian_h_x_ = Mat34::Zero();
+        Mat36 jacobian_h_x_ = Mat36::Zero();
         Eigen::LDLT<Mat3> innovation_covariance_ldlt_;
         double chi_square_ = std::numeric_limits<double>::quiet_NaN();
     };
@@ -67,8 +72,8 @@ public:
     }
 
     void reset() {
-        state_ = identity_quaternion();
-        covariance_ = projected_covariance(state_, config_.initial_covariance);
+        state_ = identity_state();
+        covariance_ = projected_initial_covariance(state_.head<4>());
         ++revision_;
     }
 
@@ -106,20 +111,26 @@ public:
         const double cy = std::cos(initial_yaw * 0.5);
         const double sy = std::sin(initial_yaw * 0.5);
 
-        state_(0) = cy * q0_val - sy * q3_val;
-        state_(1) = cy * q1_val - sy * q2_val;
-        state_(2) = cy * q2_val + sy * q1_val;
-        state_(3) = cy * q3_val + sy * q0_val;
+        Vec4 quaternion;
+        quaternion(0) = cy * q0_val - sy * q3_val;
+        quaternion(1) = cy * q1_val - sy * q2_val;
+        quaternion(2) = cy * q2_val + sy * q1_val;
+        quaternion(3) = cy * q3_val + sy * q0_val;
 
-        state_ = normalize_quaternion(state_);
-        covariance_ = projected_covariance(state_, config_.initial_covariance);
+        quaternion = normalize_quaternion(quaternion);
+        state_ = identity_state();
+        state_.head<4>() = quaternion;
+        covariance_ = projected_initial_covariance(quaternion);
         ++revision_;
         return true;
     }
 
     void inflate_attitude_uncertainty_to_initial() {
-        covariance_ = covariance_with_psd_floor(
-            covariance_, projected_covariance(state_, config_.initial_covariance));
+        Mat6 covariance_floor = Mat6::Zero();
+        covariance_floor.topLeftCorner<4, 4>() =
+            projected_covariance(state_.head<4>(), config_.initial_covariance);
+        covariance_floor.bottomRightCorner<2, 2>() = covariance_.bottomRightCorner<2, 2>();
+        covariance_ = covariance_with_psd_floor(covariance_, covariance_floor);
         ++revision_;
     }
 
@@ -132,24 +143,34 @@ public:
             return false;
         }
 
+        const Vec4 quaternion_prior = state_.head<4>();
+        const Vec3 bias_corrected_gyro = gyro_rad_per_sec - Vec3{state_(4), state_(5), 0.0};
+
         const PropagationResult propagation =
-            propagate_quaternion(state_, gyro_rad_per_sec, dt_seconds);
+            propagate_quaternion(quaternion_prior, bias_corrected_gyro, dt_seconds);
         if (!propagation.quaternion.allFinite() || !propagation.orthogonalization.allFinite()) {
             return false;
         }
-        const Vec4 prior_state = propagation.quaternion;
         const Mat4& orthogonalization = propagation.orthogonalization;
 
-        const Mat4 jacobian_f_x = state_jacobian(gyro_rad_per_sec, dt_seconds, orthogonalization);
-        const Mat43 jacobian_f_w = process_noise_jacobian(state_, orthogonalization);
-        Mat4 prior_cov = symmetrized_mat4(
+        const Mat6 jacobian_f_x =
+            state_jacobian(quaternion_prior, bias_corrected_gyro, dt_seconds, orthogonalization);
+        const Mat43 jacobian_f_w = process_noise_jacobian(quaternion_prior, orthogonalization);
+
+        Mat6 process_covariance = Mat6::Zero();
+        process_covariance.topLeftCorner<4, 4>() =
+            jacobian_f_w * config_.process_noise * jacobian_f_w.transpose();
+        process_covariance.bottomRightCorner<2, 2>() =
+            config_.bias_process_noise * Eigen::Matrix2d::Identity();
+
+        Mat6 prior_cov = symmetrized(
             jacobian_f_x * covariance_ * jacobian_f_x.transpose()
-            + dt_seconds * jacobian_f_w * config_.process_noise * jacobian_f_w.transpose());
+            + dt_seconds * process_covariance);
         if (!is_positive_semidefinite(prior_cov)) {
             return false;
         }
 
-        state_ = prior_state;
+        state_.head<4>() = propagation.quaternion;
         covariance_ = prior_cov;
         ++revision_;
         return true;
@@ -163,12 +184,12 @@ public:
         if (!normalized_accel.has_value())
             return std::nullopt;
 
-        const Vec3 predicted_accel = measurement_model(state_);
+        const Vec3 predicted_accel = measurement_model(state_.head<4>());
         const Vec3 gate_innovation = accel_g - predicted_accel;
         const Vec3 update_innovation = *normalized_accel - predicted_accel;
-        const Mat34 jacobian_h_x = measurement_jacobian(state_);
+        const Mat36 jacobian_h_x = measurement_jacobian(state_.head<4>());
         const Mat3 projected_covariance = jacobian_h_x * covariance_ * jacobian_h_x.transpose();
-        const Mat3 gate_covariance = symmetrized_mat3(projected_covariance + config_.gate_noise);
+        const Mat3 gate_covariance = symmetrized(projected_covariance + config_.gate_noise);
 
         if (!is_positive_definite(gate_covariance)) {
             return std::nullopt;
@@ -188,7 +209,7 @@ public:
         }
 
         const Mat3 update_covariance =
-            symmetrized_mat3(projected_covariance + config_.measurement_noise);
+            symmetrized(projected_covariance + config_.measurement_noise);
         if (!is_positive_definite(update_covariance)) {
             return std::nullopt;
         }
@@ -205,34 +226,47 @@ public:
         if (update.revision_ != revision_) {
             return false;
         }
-        const Vec4 state_prior = state_;
-        const Mat34 k_transpose =
+        const Vec6 state_prior = state_;
+        const Mat36 k_transpose =
             update.innovation_covariance_ldlt_.solve(update.jacobian_h_x_ * covariance_);
         if (!k_transpose.allFinite()) {
             return false;
         }
-        const Eigen::Matrix<double, 4, 3> kalman_gain = k_transpose.transpose();
-        Mat4 state_update_mask = Mat4::Identity();
-        state_update_mask(3, 3) = 0.0;
-        const Eigen::Matrix<double, 4, 3> effective_gain = state_update_mask * kalman_gain;
+        const Mat63 kalman_gain = k_transpose.transpose();
 
-        const Vec4 quaternion_raw = state_prior + effective_gain * update.innovation_;
-        if (!quaternion_raw.allFinite() || quaternion_raw.squaredNorm() <= kEpsilon) {
+        // The accelerometer observes only the two tilt degrees of freedom; the
+        // rotation about gravity (yaw) is unobservable.  Zeroing the body-frame
+        // q3 term only equals "no yaw correction" while the body is level, so
+        // remove the component of the attitude correction along the predicted
+        // gravity direction instead.
+        Vec6 state_update = kalman_gain * update.innovation_;
+        const Vec3 gravity_direction = measurement_model(state_prior.head<4>());
+        if (gravity_direction.squaredNorm() > kEpsilon) {
+            Vec3 rotation_update = state_update.segment<3>(1);
+            rotation_update -= rotation_update.dot(gravity_direction) * gravity_direction;
+            state_update.segment<3>(1) = rotation_update;
+        }
+
+        const Vec6 state_raw = state_prior + state_update;
+        if (!state_raw.allFinite() || state_raw.head<4>().squaredNorm() <= kEpsilon) {
             return false;
         }
 
-        const Mat4 matrix_tmp = Mat4::Identity() - effective_gain * update.jacobian_h_x_;
-        Mat4 corrected_covariance =
+        const Mat6 matrix_tmp = Mat6::Identity() - kalman_gain * update.jacobian_h_x_;
+        Mat6 corrected_covariance =
             matrix_tmp * covariance_ * matrix_tmp.transpose()
-            + effective_gain * config_.measurement_noise * effective_gain.transpose();
+            + kalman_gain * config_.measurement_noise * kalman_gain.transpose();
 
-        const Mat4 j_norm = orthogonalization_jacobian(quaternion_raw);
-        corrected_covariance = symmetrized_mat4(j_norm * corrected_covariance * j_norm.transpose());
+        Mat6 normalization = Mat6::Identity();
+        normalization.topLeftCorner<4, 4>() = orthogonalization_jacobian(state_raw.head<4>());
+        corrected_covariance =
+            symmetrized(normalization * corrected_covariance * normalization.transpose());
 
         if (!is_positive_semidefinite(corrected_covariance)) {
             return false;
         }
-        state_ = normalize_quaternion(quaternion_raw);
+        state_ = state_raw;
+        state_.head<4>() = normalize_quaternion(state_raw.head<4>());
         covariance_ = corrected_covariance;
         ++revision_;
         return true;
@@ -247,6 +281,13 @@ public:
         return {state_[0], state_[1], state_[2], state_[3]};
     }
 
+    void set_initial_gyro_bias(const double bias_x, const double bias_y) noexcept {
+        state_(4) = bias_x;
+        state_(5) = bias_y;
+    }
+
+    [[nodiscard]] Eigen::Vector2d gyro_bias() const noexcept { return {state_(4), state_(5)}; }
+
 private:
     struct PropagationResult {
         Vec4 quaternion = identity_quaternion();
@@ -257,6 +298,12 @@ private:
         Vec4 q;
         q << 1.0, 0.0, 0.0, 0.0;
         return q;
+    }
+
+    [[nodiscard]] static Vec6 identity_state() {
+        Vec6 state = Vec6::Zero();
+        state(0) = 1.0;
+        return state;
     }
 
     [[nodiscard]] static std::optional<Vec3> normalize_vector(const Vec3& vector) {
@@ -277,12 +324,10 @@ private:
         return quaternion / std::sqrt(squared_norm);
     }
 
-    [[nodiscard]] static Mat3 symmetrized_mat3(const Mat3& matrix) {
-        return 0.5 * (matrix + matrix.transpose());
-    }
-
-    [[nodiscard]] static Mat4 symmetrized_mat4(const Mat4& matrix) {
-        return 0.5 * (matrix + matrix.transpose());
+    template <typename Derived>
+    [[nodiscard]] static typename Derived::PlainObject
+        symmetrized(const Eigen::MatrixBase<Derived>& matrix) {
+        return (0.5 * (matrix + matrix.transpose())).eval();
     }
 
     [[nodiscard]] static bool is_positive_definite(const Mat3& matrix) {
@@ -290,7 +335,7 @@ private:
             return false;
         }
 
-        const Eigen::SelfAdjointEigenSolver<Mat3> solver(symmetrized_mat3(matrix));
+        const Eigen::SelfAdjointEigenSolver<Mat3> solver(symmetrized(matrix));
         if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite()) {
             return false;
         }
@@ -300,12 +345,14 @@ private:
         return solver.eigenvalues().minCoeff() > tolerance;
     }
 
-    [[nodiscard]] static bool is_positive_semidefinite(const Mat4& matrix) {
+    template <typename Derived>
+    [[nodiscard]] static bool is_positive_semidefinite(const Eigen::MatrixBase<Derived>& matrix) {
         if (!matrix.allFinite()) {
             return false;
         }
 
-        const Eigen::SelfAdjointEigenSolver<Mat4> solver(symmetrized_mat4(matrix));
+        using PlainMatrix = typename Derived::PlainObject;
+        const Eigen::SelfAdjointEigenSolver<PlainMatrix> solver(symmetrized(matrix));
         if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite()) {
             return false;
         }
@@ -315,22 +362,25 @@ private:
         return solver.eigenvalues().minCoeff() >= -tolerance;
     }
 
-    [[nodiscard]] static Mat4 positive_semidefinite_part(const Mat4& matrix) {
-        const Eigen::SelfAdjointEigenSolver<Mat4> solver(symmetrized_mat4(matrix));
+    template <typename Derived>
+    [[nodiscard]] static typename Derived::PlainObject
+        positive_semidefinite_part(const Eigen::MatrixBase<Derived>& matrix) {
+        using PlainMatrix = typename Derived::PlainObject;
+        const Eigen::SelfAdjointEigenSolver<PlainMatrix> solver(symmetrized(matrix));
         if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite()) {
-            return Mat4::Zero();
+            return PlainMatrix::Zero();
         }
 
-        return symmetrized_mat4(
+        return symmetrized(
             solver.eigenvectors() * solver.eigenvalues().cwiseMax(0.0).asDiagonal()
             * solver.eigenvectors().transpose());
     }
 
-    [[nodiscard]] static Mat4
-        covariance_with_psd_floor(const Mat4& covariance, const Mat4& covariance_floor) {
-        Mat4 floor = symmetrized_mat4(covariance_floor);
-        Mat4 result = floor + positive_semidefinite_part(symmetrized_mat4(covariance) - floor);
-        result = symmetrized_mat4(result);
+    [[nodiscard]] static Mat6
+        covariance_with_psd_floor(const Mat6& covariance, const Mat6& covariance_floor) {
+        Mat6 floor = symmetrized(covariance_floor);
+        Mat6 result = floor + positive_semidefinite_part(symmetrized(covariance) - floor);
+        result = symmetrized(result);
         if (is_positive_semidefinite(result)) {
             return result;
         }
@@ -341,12 +391,21 @@ private:
     [[nodiscard]] static Mat4
         projected_covariance(const Vec4& quaternion, const Mat4& raw_covariance) {
         const Mat4 j_norm = orthogonalization_jacobian(quaternion);
-        Mat4 covariance = symmetrized_mat4(j_norm * raw_covariance * j_norm.transpose());
+        Mat4 covariance = symmetrized(j_norm * raw_covariance * j_norm.transpose());
         if (is_positive_semidefinite(covariance)) {
             return covariance;
         }
 
-        return symmetrized_mat4(j_norm * Mat4::Identity() * j_norm.transpose());
+        return symmetrized(j_norm * Mat4::Identity() * j_norm.transpose());
+    }
+
+    [[nodiscard]] Mat6 projected_initial_covariance(const Vec4& quaternion) const {
+        Mat6 covariance = Mat6::Zero();
+        covariance.topLeftCorner<4, 4>() =
+            projected_covariance(quaternion, config_.initial_covariance);
+        covariance.bottomRightCorner<2, 2>() =
+            config_.initial_bias_variance * Eigen::Matrix2d::Identity();
+        return covariance;
     }
 
     [[nodiscard]] static Mat4 omega_matrix(const Vec3& gyro_rad_per_sec) {
@@ -381,9 +440,24 @@ private:
         return result;
     }
 
-    [[nodiscard]] static Mat4 state_jacobian(
-        const Vec3& gyro_rad_per_sec, const double dt, const Mat4& orthogonalization) {
-        return orthogonalization * (Mat4::Identity() + 0.5 * dt * omega_matrix(gyro_rad_per_sec));
+    [[nodiscard]] static Mat6 state_jacobian(
+        const Vec4& quaternion, const Vec3& gyro_rad_per_sec, const double dt,
+        const Mat4& orthogonalization) {
+        Mat6 result = Mat6::Identity();
+        result.topLeftCorner<4, 4>() =
+            orthogonalization * (Mat4::Identity() + 0.5 * dt * omega_matrix(gyro_rad_per_sec));
+
+        // Derivative of the propagated quaternion with respect to the gyroscope
+        // bias, left-multiplied by the normalization Jacobian.
+        Eigen::Matrix<double, 4, 2> bias_jacobian;
+        // clang-format off
+        bias_jacobian <<  quaternion(1),  quaternion(2),
+                         -quaternion(0),  quaternion(3),
+                         -quaternion(3), -quaternion(0),
+                          quaternion(2), -quaternion(1);
+        // clang-format on
+        result.topRightCorner<4, 2>() = orthogonalization * (0.5 * dt * bias_jacobian);
+        return result;
     }
 
     [[nodiscard]] static Mat43
@@ -407,12 +481,13 @@ private:
         return result;
     }
 
-    [[nodiscard]] static Mat34 measurement_jacobian(const Vec4& state) {
-        Mat34 result;
+    [[nodiscard]] static Mat36 measurement_jacobian(const Vec4& state) {
+        Mat36 result = Mat36::Zero();
         // clang-format off
-        result << -2.0 * state(2),  2.0 * state(3), -2.0 * state(0),  2.0 * state(1),
-                   2.0 * state(1),  2.0 * state(0),  2.0 * state(3),  2.0 * state(2),
-                   2.0 * state(0), -2.0 * state(1), -2.0 * state(2),  2.0 * state(3);
+        result.topLeftCorner<3, 4>() <<
+            -2.0 * state(2),  2.0 * state(3), -2.0 * state(0),  2.0 * state(1),
+             2.0 * state(1),  2.0 * state(0),  2.0 * state(3),  2.0 * state(2),
+             2.0 * state(0), -2.0 * state(1), -2.0 * state(2),  2.0 * state(3);
         // clang-format on
         return result;
     }
@@ -420,8 +495,8 @@ private:
     static constexpr double kEpsilon = 1e-12;
 
     Config config_;
-    Vec4 state_ = identity_quaternion();
-    Mat4 covariance_ = Mat4::Identity();
+    Vec6 state_ = identity_state();
+    Mat6 covariance_ = Mat6::Identity();
     std::uint64_t revision_ = 0;
 };
 

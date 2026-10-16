@@ -27,58 +27,7 @@ value_broadcaster:
 
     forward_list:
       - /gimbal/yaw/control_angle_error
-      - /gimbal/top_yaw/target_angle_error
-      - /gimbal/bottom_yaw/target_angle_error
-      - /gimbal/top_yaw/target_angle_velocity
-      - /gimbal/bottom_yaw/target_angle_velocity
-      - /gimbal/bottom_yaw/estimated_velocity
 
-      - /gimbal/yaw/angle
-      - /gimbal/yaw/velocity
-      - /gimbal/top_yaw/angle
-      - /gimbal/top_yaw/raw_angle
-      - /gimbal/top_yaw/velocity
-      - /gimbal/bottom_yaw/angle
-      - /gimbal/bottom_yaw/raw_angle
-      - /gimbal/bottom_yaw/velocity
-      - /gimbal/yaw/velocity_imu
-      - /gimbal/pitch/angle
-      - /gimbal/pitch/velocity
-      - /gimbal/pitch/velocity_imu
-      - /gimbal/pitch/raw_angle
-      - /gimbal/pitch/velocity_filtered
-
-      - /gimbal/top_yaw/control_torque
-      - /gimbal/bottom_yaw/control_torque
-      - /gimbal/pitch/control_velocity
-      - /gimbal/pitch/control_torque
-      - /gimbal/pitch/control_angle_error
-      - /debug/sliding_value
-
-      - /debug/top_board/imu_accel_x
-      - /debug/top_board/imu_accel_y
-      - /debug/top_board/imu_accel_z
-      - /debug/top_board/imu_gyro_x
-      - /debug/top_board/imu_gyro_y
-      - /debug/top_board/imu_gyro_z
-      - /debug/top_board/imu_roll
-      - /debug/top_board/imu_pitch
-      - /debug/top_board/imu_yaw
-      - /debug/bottom_board/imu_gyro_x
-      - /debug/bottom_board/imu_gyro_y
-      - /debug/bottom_board/imu_gyro_z
-      - /debug/bottom_board/imu_accel_x
-      - /debug/bottom_board/imu_accel_y
-      - /debug/bottom_board/imu_accel_z
-      - /debug/bottom_board/imu_roll
-      - /debug/bottom_board/imu_pitch
-      - /debug/bottom_board/imu_yaw
-      - /gimbal/pitch/error_code
-
-      - /chassis/angle
-      - /chassis/control_angle
-      - /chassis/yaw/velocity_imu
-      - /chassis/debug/spinning_bias
 
 dual_infantry_hardware:
   ros__parameters:
@@ -89,20 +38,6 @@ dual_infantry_hardware:
     bottom_yaw_motor_zero_point: 2687
     top_yaw_motor_zero_point: 7916
     pitch_motor_zero_point: 29364
-
-    imu_bias_x: 3
-    imu_bias_y: 8
-    imu_bias_z: 2
-
-    imu_bias_fine_x: -0.008371
-    imu_bias_fine_y: 0.002737
-    imu_bias_fine_z: 0.002742
-
-    imu_bias_bottom_x: 0
-    imu_bias_bottom_y: 0
-    imu_bias_bottom_z: 0
-
-    imu_startup_calibration_samples: 1000
 
 gimbal_controller:
   ros__parameters:
