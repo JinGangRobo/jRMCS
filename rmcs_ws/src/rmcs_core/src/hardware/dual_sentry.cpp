@@ -118,10 +118,9 @@ private:
             // TODO(hardware-migration): v2 used the GM6020 current-loop frame (raw_current_max
             // 16384). Confirm the physical yaw motor control mode on the real robot.
             gimbal_top_yaw_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            dual_sentry.get_parameter("top_yaw_motor_zero_point").as_int())));
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}.set_encoder_zero_point(
+                    static_cast<int>(
+                        dual_sentry.get_parameter("top_yaw_motor_zero_point").as_int())));
 
             gimbal_pitch_motor_.configure(
                 device::DmMotor::Config{device::DmMotor::Type::kJ4310}
@@ -302,10 +301,9 @@ private:
 
             // TODO(hardware-migration): see the top-board note; v2 used the GM6020 current loop.
             gimbal_bottom_yaw_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            dual_sentry.get_parameter("bottom_yaw_motor_zero_point").as_int())));
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}.set_encoder_zero_point(
+                    static_cast<int>(
+                        dual_sentry.get_parameter("bottom_yaw_motor_zero_point").as_int())));
 
             dual_sentry.register_output("/referee/serial", referee_serial_);
             referee_serial_->read = [this](std::byte* buffer, size_t size) {

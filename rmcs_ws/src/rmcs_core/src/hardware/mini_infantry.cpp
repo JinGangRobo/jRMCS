@@ -111,10 +111,9 @@ private:
             // TODO(hardware-migration): v2 used the GM6020 current-loop frame (raw_current_max
             // 16384). Confirm the physical pitch motor control mode on the real robot.
             gimbal_pitch_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            mini_infantry.get_parameter("pitch_motor_zero_point").as_int())));
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}.set_encoder_zero_point(
+                    static_cast<int>(
+                        mini_infantry.get_parameter("pitch_motor_zero_point").as_int())));
 
             gimbal_left_friction_.configure(
                 device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 1}
@@ -266,10 +265,9 @@ private:
 
             // TODO(hardware-migration): see the top-board note; v2 used the GM6020 current loop.
             gimbal_yaw_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}
-                    .set_encoder_zero_point(
-                        static_cast<int>(
-                            mini_infantry.get_parameter("yaw_motor_zero_point").as_int())));
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}.set_encoder_zero_point(
+                    static_cast<int>(
+                        mini_infantry.get_parameter("yaw_motor_zero_point").as_int())));
 
             gimbal_bullet_feeder_.configure(
                 device::DjiMotor::Config{device::DjiMotor::Type::kM2006, 7}

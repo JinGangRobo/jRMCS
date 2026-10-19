@@ -46,8 +46,9 @@ public:
         : Node{
               get_component_name(),
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)}
-        , command_component_(create_partner_component<DualInfantryCommand>(
-              get_component_name() + "_command", *this)) {
+        , command_component_(
+              create_partner_component<DualInfantryCommand>(
+                  get_component_name() + "_command", *this)) {
         using namespace rmcs_description;
 
         register_output("/tf", tf_);
@@ -127,15 +128,16 @@ private:
             // TODO(hardware-migration): v2 used the GM6020 current-loop frame (raw_current_max
             // 16384). Confirm the physical yaw motor control mode on the real robot.
             gimbal_top_yaw_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}
-                    .set_encoder_zero_point(static_cast<int>(
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}.set_encoder_zero_point(
+                    static_cast<int>(
                         dual_infantry.get_parameter("top_yaw_motor_zero_point").as_int())));
 
             gimbal_pitch_motor_.configure(
                 device::DmMotor::Config{device::DmMotor::Type::kJ4310}
                     .set_reversed()
-                    .set_encoder_zero_point(static_cast<int>(
-                        dual_infantry.get_parameter("pitch_motor_zero_point").as_int())));
+                    .set_encoder_zero_point(
+                        static_cast<int>(
+                            dual_infantry.get_parameter("pitch_motor_zero_point").as_int())));
 
             gimbal_left_friction_.configure(
                 device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 2}
@@ -365,8 +367,8 @@ private:
             // TODO(hardware-migration): see the top-board note; v2 used the GM6020 current-loop
             // frame.
             gimbal_bottom_yaw_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}
-                    .set_encoder_zero_point(static_cast<int>(
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}.set_encoder_zero_point(
+                    static_cast<int>(
                         dual_infantry.get_parameter("bottom_yaw_motor_zero_point").as_int())));
 
             dual_infantry.register_output(
@@ -375,10 +377,8 @@ private:
             dual_infantry.register_output("/debug/bottom_board/imu_gyro_x", debug_gyro_x_, 0.0);
             dual_infantry.register_output("/debug/bottom_board/imu_gyro_y", debug_gyro_y_, 0.0);
             dual_infantry.register_output("/debug/bottom_board/imu_gyro_z", debug_gyro_z_, 0.0);
-            dual_infantry.register_output(
-                "/debug/bottom_board/imu_roll", debug_imu_roll_, 0.0);
-            dual_infantry.register_output(
-                "/debug/bottom_board/imu_pitch", debug_imu_pitch_, 0.0);
+            dual_infantry.register_output("/debug/bottom_board/imu_roll", debug_imu_roll_, 0.0);
+            dual_infantry.register_output("/debug/bottom_board/imu_pitch", debug_imu_pitch_, 0.0);
             dual_infantry.register_output("/debug/bottom_board/imu_yaw", debug_imu_yaw_, 0.0);
 
             dual_infantry.register_output("/referee/serial", referee_serial_);
