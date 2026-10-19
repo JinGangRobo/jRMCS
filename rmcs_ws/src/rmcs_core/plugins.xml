@@ -21,7 +21,6 @@
   <class type="rmcs_core::controller::chassis::DeformableSuspension" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::chassis::DeformableJointController" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::chassis::JChassisPowerController" base_class_type="rmcs_executor::Component" />
-  <class type="rmcs_core::controller::chassis::JOmniWheelController" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::gimbal::SimpleGimbalController" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::gimbal::HeroGimbalController" base_class_type="rmcs_executor::Component" />
@@ -61,6 +60,7 @@
   <class type="rmcs_core::referee::command::interaction::SentryDecision" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::referee::app::ui::Infantry" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::referee::app::ui::DualInfantry" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::referee::app::ui::DeformableInfantry" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::referee::app::ui::Hero" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::referee::app::ui::Flight" base_class_type="rmcs_executor::Component" />
