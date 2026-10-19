@@ -424,5 +424,18 @@ v2 的五份机型 yaml（`dual-infantry`/`dual-sentry`/`mec-hero`/`mini-infantr
 
 v3 只有单一 `config/config.yaml` + `config/executor.yaml`（无 per-robot 文件、无 `RMCS_ROBOT_TYPE` 分支），选择机制是 `AUTOAIM_CONFIG` / `custom.yaml` 覆盖。且 v2 的 config 结构（`capturer`/`identifier`/`pose_estimator.transforms`/`visualization` 块）与 v3 已重组，**直接拷文件无法反序列化**。
 
-### 未决
-- 是否现在手工移植 `2c3122f` + `8d6a9ac`。二者涉及发射控制数学与跟踪器状态机；本地无相机/NPU（rknn 在 x86 不可用），**无法验证行为**，只能保证编译通过。
+### 裁定结果（2026-10-19，用户决定）
+
+**C2 暂停，仅保留本评估结论，不改动自瞄代码。**
+
+| 事项 | 决定 |
+|---|---|
+| 手工移植 `2c3122f`（枪口坐标系 yaw、离群 reset、armor 朝向过滤） | **不做**（暂停） |
+| 手工移植 `8d6a9ac`（EKF 不收敛自动重置） | **不做**（暂停） |
+| 五份机型参数（相机内参/畸变、`bullet_speed`、火控 k 等）覆盖 config | **不做** |
+| 23 个 v2 独有提交的 merge / cherry-pick | **不做** |
+
+保留理由与后续入口：
+- 本地无相机、无 NPU（rknn 在 x86 不可用），移植后只能保证编译通过、无法验证行为，收益/风险比不佳。
+- 上表两个候选的移植点已在本节写明（`src/kernel/fire_control.cpp`、`src/module/tracker/model/robot.cpp`、新增 tracker `reset()` API），后续具备实机条件时可据此直接开工。
+- 机型参数的具体数值清单已在上文「PARAM」小节完整记录，后续需要时按 v3 的 `AUTOAIM_CONFIG` 覆盖结构重写即可，无需回读 v2 仓库。
