@@ -5,8 +5,8 @@
 
 - **目标仓库（可写）**：`/workspaces/RMCS`（jRMCS）
 - **参照仓库（只读）**：`/workspaces/reATRM`（reATRM）
-- **当前阶段**：阶段三「执行」——**P1 其余机型全链路**（dual-sentry / mini-infantry / mec-hero），含 07 硬件 / 14 UI / 18 config / `pid-tune-tool` 弃用替代。
-  阶段二（dual-infantry，P0）已完成主题 06/08/09/10/14/17/18 的代码改动，arm64 交叉编译全绿；详见「执行记录」。
+- **当前阶段**：阶段三「执行」——**P1 其余机型全链路（已完成）**：07 硬件校正（dual-sentry / mini-infantry）、14 UI（新建 `ui::DualSentry`/`ui::MiniInfantry`、`mec-hero` 挂 `ui::Hero`）、18 config（三份重建为 24 组件）、`pid-tune-tool` 弃用并补 identification 替代 config；arm64 交叉编译全绿。
+  阶段二（dual-infantry，P0）已完成主题 06/08/09/10/14/17/18 的代码改动；两阶段详见「执行记录」。
 
 ---
 
@@ -83,18 +83,18 @@ docs-mig/
 | 04 消息与接口-rmcs_msgs与interface | P0 | 全局 | 1 | 已完成（operate_mode/autopilot 按决策放弃） |
 | 05 硬件栈-librmcs与设备驱动 | P0 | 全机型 | 2 | 已完成（驱动已下沉，dual-infantry 无缺件） |
 | 06 硬件模型-dual_infantry | **P0** | dual-infantry | 2 | **已完成**（referee serial/supercap/gy614/imu_bias/CAN2/电流环） |
-| 07 硬件模型-其余机型 | P1 | sentry/hero/mini | 2 | 未改动（仅文档） |
+| 07 硬件模型-其余机型 | P1 | sentry/hero/mini | 2 | **已完成**（sentry/mini 的 yaw 回 `kGM6020` 电流环；IMU 映射经核实 v3 已正确，无需改） |
 | 08 控制器-底盘 | **P0** | 全机型 | 3 | 已完成（J* 控制器就位；OperateLogic 按决策放弃） |
 | 09 控制器-云台 | P0 | 全机型 | 3 | **已完成**（simple_gimbal_controller 补 v2 特性） |
 | 10 控制器-发射 | P0 | 全机型 | 3 | **已完成**（heat 输出 + 接 HeatController） |
 | 11 控制器-PID与滤波与数学工具 | P1 | 多机型 | 3 | 已完成（配置层处理；`enable` 不复刻） |
 | 12 诊断-diagnosis | P1 | 全机型 | 3 | **已完成**（接入 Diagnosis，蜂鸣器无法移植） |
 | 13 裁判系统-Status与Command | P1 | 全机型 | 4 | 已完成（v3 已含，接入 config） |
-| 14 裁判系统-UI | **P0** | 全机型 | 4 | **已完成**（新建 ui::DualInfantry + 注册） |
+| 14 裁判系统-UI | **P0** | 全机型 | 4 | **已完成**（新建 ui::DualInfantry/DualSentry/MiniInfantry；`mec-hero` 挂 ui::Hero；plugins.xml 去 TfBroadcaster） |
 | 15 TF与描述 | P2 | sentry | 4 | 已完成（无需改动） |
 | 16 通用工具-rmcs_utility | P1 | 全局 | 1 | 已完成（v3 为超集，无需改动） |
 | 17 视觉子系统-rmcs_auto_aim_v2 | P0 | 需自瞄机型 | 5 | **已完成**（接入 capturer + 硬同步输出） |
-| 18 bringup-配置与launch | **P0** | dual-infantry | 5 | **已完成**（dual-infantry.yaml 重建，24 组件） |
+| 18 bringup-配置与launch | **P0** | dual-infantry | 5 | **已完成**（四份 config：dual-infantry 重建 + dual-sentry/mini-infantry/mec-hero 修复为 24 组件；新增 pid-tune-tool identification config） |
 
 ---
 
@@ -109,6 +109,10 @@ docs-mig/
 | Batch4 | 13/14/15 | ✅ | ✅ | ✅ | — | 完成（14 新建 UI） |
 | Batch5 | 17/18 | ✅ | ✅ | ✅ | ☐ | 完成（17 接入 + 18 重建 config） |
 | Batch6 | 01/02 + 收口 | ✅ | — | — | — | 未做（按决策不在本次代码范围） |
+| Batch7 | 07 硬件（sentry/mini） | ✅ | ✅ | ✅ | ☐ | 完成（yaw 回 `kGM6020` 电流环；IMU 映射核实后无需改） |
+| Batch8 | 14 UI（DualSentry/MiniInfantry/Hero） | ✅ | ✅ | ✅ | — | 完成（`nm` 校验插件导出） |
+| Batch9 | 18 config（三份机型） | ✅ | ✅ | — | ☐ | 完成（各 24 组件，结构校验通过） |
+| Batch10 | pid-tune-tool 替代 | ✅ | ✅ | — | ☐ | 完成（identification + ValueCollector config） |
 
 > 说明：`单测/静态` 以 `clang-format --dry-run -Werror`（改动文件）+ `nm` 插件符号核查 + `yaml.safe_load` 结构校验代替；
 > `实机` 一列留空（☐）表示需上真机标定，相关 TODO 已写入代码与 config。
@@ -152,6 +156,44 @@ docs-mig/
 
 ---
 
+## 执行记录（阶段三，P1 其余机型全链路）
+
+### 改动文件清单
+
+| 文件 | 主题 | 性质 |
+|---|---|---|
+| `rmcs_ws/src/rmcs_core/src/hardware/dual_sentry.cpp` | 07 | 改（yaw → `kGM6020`） |
+| `rmcs_ws/src/rmcs_core/src/hardware/mini_infantry.cpp` | 07 | 改（pitch/yaw → `kGM6020`） |
+| `rmcs_ws/src/rmcs_core/src/referee/app/ui/dual_sentry.cpp` | 14 | **新增** |
+| `rmcs_ws/src/rmcs_core/src/referee/app/ui/mini_infantry.cpp` | 14 | **新增** |
+| `rmcs_ws/src/rmcs_core/plugins.xml` | 14 | 改（注册两个 UI；删除不存在的 `TfBroadcaster`） |
+| `rmcs_ws/src/rmcs_bringup/config/dual-sentry.yaml` | 18 | 改 |
+| `rmcs_ws/src/rmcs_bringup/config/mini-infantry.yaml` | 18 | 改 |
+| `rmcs_ws/src/rmcs_bringup/config/mec-hero.yaml` | 18 | 改 |
+| `rmcs_ws/src/rmcs_bringup/config/pid-tune-tool.yaml` | 方案 B | **新增**（替代 `PidTuneTool`） |
+
+### 要点
+
+- **07 硬件**：`dual_sentry`（top/bottom yaw）与 `mini_infantry`（pitch/yaw）的 `kGM6020Voltage` 改回 v2 的 `kGM6020` 电流环（`raw_current_max` 16384），均带 TODO。
+  **IMU 映射经核实无需改**：v2 `set_coordinate_mapping` 实为恒等（sentry/mini），v3 的 `Bmi088Ekf::Config{}` 默认即恒等；hero 的 `body_to_sensor` 矩阵与 v2 推导完全一致。hero 无 GM6020，未改。
+- **14 UI**：新增 `ui::DualSentry`、`ui::MiniInfantry`（与 `ui::DualInfantry` 同构，v3 已无受伤方向/操作辅助/中心区等接口）；
+  `mec-hero.yaml` 挂上 v3 已有的 `referee::app::ui::Hero`；`plugins.xml` 删除 v3 不存在的 `broadcaster::TfBroadcaster`。
+- **18 config**：三份 config 组件均补齐到 **24 条**（补机型 UI + `AutoAimCapturerComponent`），并统一修正 v3 键名
+  （`*_limit`→`*_max`、`wheel_radius_`→`wheel_radius`、`spinning_bais_coefficient`→`spinning_bias_coefficient`、去 `friction_coefficient`、补 `moment_of_inertia`/`spinning_bias_adjust`）、
+  补 `yaw_upper_limit`/`yaw_lower_limit`（`SimpleGimbalController` 必读，否则启动抛异常）、删除死键 `enable:`、修正弹链 PID measurement（`velocity_filtered`→`velocity`）、
+  清理 `value_broadcaster` 中 v3 已不存在的 `/debug/solver/*`、`/debug/feeder/*`、`/referee/chassis/current_hp` 等悬空项。`board_serial_*` 保留 placeholder + TODO。
+- **pid-tune-tool（方案 B）**：v3 已无 `PidTuneTool`。新增 `config/pid-tune-tool.yaml`，在 dual-infantry 板卡栈（唯一发布 `/remote/*` 的机型）上运行
+  `identification::SweptFrequencyController`（pitch 扫频）与 `identification::StaticTorqueTestController`（top yaw 静态扭矩），并用 `debug::ValueCollector` 落 CSV。
+
+### 验证
+
+- `./.script/build-rmcs-cross --target-arch=arm64 --packages-skip rmcs_auto_aim_v2 --executor sequential` → **EXIT=0，7 包全绿，无 error/warning**。
+- `nm -C build-cross-arm64/rmcs_core/librmcs_core.so | grep registerPlugin` → 含 `ui::{DualSentry,MiniInfantry,Hero,DualInfantry}` 等全部导出。
+- `yaml.safe_load`：三份机型 config 各 **24 组件** + `pid-tune-tool.yaml` 5 组件，结构均有效；坏模式 grep 全部干净。
+- 所有改动均**分主题本地提交**（`dev/jgrobo-ize`，未 push）：`7c38f8a`(07 硬件) / `b61a1d8`(14 UI) / `6efb71f`(18 三份 config) / `4402b23`(pid-tune-tool)。
+
+---
+
 ## 使用方式
 
 1. 先读 `prompts/00-prompt-v1.md` 与 `plans/00-master-plan.md`（`§9.1` 为已确认决策）。
@@ -164,7 +206,7 @@ docs-mig/
 ## 约束
 
 - **reATRM 只读**：不得修改 `/workspaces/reATRM` 下任何文件。
-- 阶段一（建档）不修改代码；阶段二（执行）已获用户确认，**仅限 dual-infantry**。
+- 阶段一（建档）不修改代码；阶段二（dual-infantry，P0）与阶段三（sentry/mini/hero，P1）均获用户确认，改动仅限该范围。
 - 交叉编译验证日志写入可写目录（`/tmp/opencode/` 或 `rmcs_ws/log-cross-arm64/`）。
 - 注意 v2(`c++20`) 与 v3(`CMAKE_CXX_STANDARD 23`) 的标准差异，以及 librmcs 集成方式差异（子模块 vs FetchContent SDK）。
 

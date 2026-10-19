@@ -352,3 +352,18 @@ broadcaster::ValueBroadcaster -> value_broadcaster
 - 修正 v3 键名（`translational_velocity_max`/`angular_velocity_max`、`wheel_radius`、补 `mass`/`moment_of_inertia`）；补全 `SmcDualYawController` 必读积分限；去掉死键 `enable:`。
 - 零点/`imu_bias`/限速采用 v2 值（带 TODO）；`operation_mode`/`operate_logic` 按决策删除。
 - 验证：`yaml.safe_load` 通过，24 组件。
+
+---
+
+## 迁移状态（阶段三，2026-10-19）
+
+- **`dual-sentry.yaml` / `mini-infantry.yaml` / `mec-hero.yaml`**：组件补齐到 **24 条**（补机型 UI + `rmcs::AutoAimCapturerComponent`，新增 `auto_aim_capturer` 参数块 `use_hardware_sync: false`）；统一修正：
+  - `chassis_controller`：`translational_velocity_limit`→`translational_velocity_max`、`angular_velocity_limit`→`angular_velocity_max`，删 `autopilot_spin_velocity_default`。
+  - `gimbal_controller`：补 `yaw_upper_limit: 1000000.0` / `yaw_lower_limit: -1000000.0`（`SimpleGimbalController` 必读，否则启动抛异常）。
+  - `omni_wheel_controller`：`wheel_radius_`→`wheel_radius`、`spinning_bais_coefficient`→`spinning_bias_coefficient`，删除 `friction_coefficient`，补 `moment_of_inertia: 4.08`、`spinning_bias_adjust: false`。
+  - PID 块：删除死键 `enable:`；`bullet_feeder_velocity_pid_controller.measurement` 由 `/gimbal/bullet_feeder/velocity_filtered` 改为 `/gimbal/bullet_feeder/velocity`。
+  - `value_broadcaster`：清掉 v3 已不存在的 `/debug/solver/*`、`/debug/aim/*`、`/debug/feeder/*`、`/referee/chassis/current_hp`（→`/referee/current_hp`）等悬空项。
+  - `board_serial_*` 保留 placeholder + TODO。
+- **新增 `pid-tune-tool.yaml`（方案 B）**：替代 v3 已删除的 `PidTuneTool`，在 `hardware::DualInfantry` 上运行 `identification::SweptFrequencyController`（`/gimbal/pitch` 扫频）与 `identification::StaticTorqueTestController`（`/gimbal/top_yaw` 静态扭矩），`debug::ValueCollector` 落 CSV，`ValueBroadcaster` 转发调参信号。
+- **验证**：三份机型 config 各 24 组件、`pid-tune-tool.yaml` 5 组件，`yaml.safe_load` 均通过；坏模式 grep 干净；交叉编译全绿。
+- **提交**：`6efb71f`（三份机型 config）、`4402b23`（pid-tune-tool）。
