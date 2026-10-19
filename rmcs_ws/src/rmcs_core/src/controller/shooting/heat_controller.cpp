@@ -23,6 +23,9 @@ public:
 
         register_output(
             "/gimbal/control_bullet_allowance/limited_by_heat", control_bullet_allowance_, 0);
+
+        // Restored for the referee UI (v2 published `/gimbal/shooter/heat`).
+        register_output("/gimbal/shooter/heat", shooter_heat_output_, 0);
     }
 
     void update() override {
@@ -31,6 +34,7 @@ public:
         if (*bullet_fired_)
             shooter_heat_ += heat_per_shot + 10;
 
+        *shooter_heat_output_ = shooter_heat_;
         *control_bullet_allowance_ = std::max<int64_t>(
             0, (*shooter_heat_limit_ - shooter_heat_ - reserved_heat) / heat_per_shot);
     }
@@ -47,6 +51,7 @@ private:
     int64_t shooter_heat_ = 0;
 
     OutputInterface<int64_t> control_bullet_allowance_;
+    OutputInterface<int64_t> shooter_heat_output_;
 };
 
 } // namespace rmcs_core::controller::shooting
