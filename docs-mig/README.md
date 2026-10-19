@@ -108,14 +108,16 @@ docs-mig/
 | Batch3 | 08/09/10/11/12 | ✅ | ✅ | ✅ | ☐ | 完成（09 控制器 + 10/12 接入） |
 | Batch4 | 13/14/15 | ✅ | ✅ | ✅ | — | 完成（14 新建 UI） |
 | Batch5 | 17/18 | ✅ | ✅ | ✅ | ☐ | 完成（17 接入 + 18 重建 config） |
-| Batch6 | 01/02 + 收口 | ✅ | — | — | — | 未做（按决策不在本次代码范围） |
+| Batch6 | 01/02 结论收口 | ✅ | ✅ | — | — | 完成（topic 01 §8 / topic 02 §8-§9 结论已落定） |
 | Batch7 | 07 硬件（sentry/mini） | ✅ | ✅ | ✅ | ☐ | 完成（yaw 回 `kGM6020` 电流环；IMU 映射核实后无需改） |
 | Batch8 | 14 UI（DualSentry/MiniInfantry/Hero） | ✅ | ✅ | ✅ | — | 完成（`nm` 校验插件导出） |
 | Batch9 | 18 config（三份机型） | ✅ | ✅ | — | ☐ | 完成（各 24 组件，结构校验通过） |
 | Batch10 | pid-tune-tool 替代 | ✅ | ✅ | — | ☐ | 完成（identification + ValueCollector config） |
+| Batch11 | 工程链路收口（A1–A10） | ✅ | ✅ | ✅ | — | 完成（C++ 标准分层、CI smoke 覆盖 `rmcs_core`、clang-tidy 评估、CC1–CC12 文档、hikcamera 依赖清理、取消默认 skip） |
 
 > 说明：`单测/静态` 以 `clang-format --dry-run -Werror`（改动文件）+ `nm` 插件符号核查 + `yaml.safe_load` 结构校验代替；
 > `实机` 一列留空（☐）表示需上真机标定，相关 TODO 已写入代码与 config。
+> Batch11 另跑了一次 `clang-tidy`（改动文件，EXIT=0 / 18 条存量告警 / 0 error），结论见 `topics/02` §9.1。
 
 ---
 

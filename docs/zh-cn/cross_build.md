@@ -76,7 +76,7 @@ readelf -h rmcs_ws/install-cross-arm64/lib/librmcs_core.so
 
 若目标为 `amd64`，将上述 `arm64/aarch64-linux-gnu` 替换为 `amd64/x86_64-linux-gnu`。
 
-本地自检故意覆盖到 `rmcs_core`，用于在推送前尽早暴露 workspace 级联依赖和交叉工具链问题；CI 只保留 `rmcs_executor` 最小 smoke，避免高频业务改动阻塞镜像推送。
+本地自检与 CI 最小 smoke 均覆盖到 `rmcs_core`，用于在推送前尽早暴露 workspace 级联依赖和交叉工具链问题。
 
 ## 6. CI 维护约定
 
@@ -87,5 +87,5 @@ readelf -h rmcs_ws/install-cross-arm64/lib/librmcs_core.so
 - `latest-full` 在每个架构 runner 上执行最小 smoke：
   - sysroot 目录存在
   - cross 编译器可执行
-  - `build-rmcs-cross --target-arch <opposite> --packages-up-to rmcs_executor` 可完成构建
-  - `readelf -h` 校验 `librmcs_executor.so` 架构
+  - `build-rmcs-cross --target-arch <opposite> --packages-up-to rmcs_core` 可完成构建
+  - `readelf -h` 校验 `librmcs_core.so` 架构
