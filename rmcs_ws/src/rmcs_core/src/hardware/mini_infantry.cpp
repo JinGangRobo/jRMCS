@@ -108,8 +108,10 @@ private:
             , gimbal_right_friction_(
                   mini_infantry, mini_infantry_command, "/gimbal/right_friction") {
 
+            // TODO(hardware-migration): v2 used the GM6020 current-loop frame (raw_current_max
+            // 16384). Confirm the physical pitch motor control mode on the real robot.
             gimbal_pitch_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020Voltage, 1}
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 1}
                     .set_encoder_zero_point(
                         static_cast<int>(
                             mini_infantry.get_parameter("pitch_motor_zero_point").as_int())));
@@ -262,8 +264,9 @@ private:
                        .set_reversed()})
             , supercap_(mini_infantry, 28.5) {
 
+            // TODO(hardware-migration): see the top-board note; v2 used the GM6020 current loop.
             gimbal_yaw_motor_.configure(
-                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020Voltage, 2}
+                device::DjiMotor::Config{device::DjiMotor::Type::kGM6020, 2}
                     .set_encoder_zero_point(
                         static_cast<int>(
                             mini_infantry.get_parameter("yaw_motor_zero_point").as_int())));
