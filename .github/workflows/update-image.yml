@@ -259,8 +259,8 @@ jobs:
               test -d "/opt/sysroots/${CROSS_TARGET}"
               command -v "${CROSS_TRIPLET}-gcc"
               command -v "${CROSS_TRIPLET}-g++"
-              ./.script/build-rmcs-cross --target-arch "${CROSS_TARGET}" --packages-up-to rmcs_executor
-              lib_path="/workspaces/RMCS/rmcs_ws/install-cross-${CROSS_TARGET}/lib/librmcs_executor.so"
+              ./.script/build-rmcs-cross --target-arch "${CROSS_TARGET}" --packages-up-to rmcs_core
+              lib_path="/workspaces/RMCS/rmcs_ws/install-cross-${CROSS_TARGET}/lib/librmcs_core.so"
               if [[ ! -f "${lib_path}" ]]; then
                 echo "Missing library: ${lib_path}" >&2
                 exit 1
