@@ -364,3 +364,65 @@ $ git diff --stat 2c3122f 8df0266 | tail -1
 - `dual-infantry.yaml` 接入 `rmcs::AutoAimCapturerComponent`（`use_hardware_sync: false`）。
 - **B10 取证（已结案）**：`rmcs_auto_aim_v2`（含 `AutoAimCapturerComponent`）**可且已成功交叉编译为 arm64**——`rmcs_ws/build-cross-arm64/rmcs_auto_aim_v2/CMakeFiles/rmcs_auto_aim_v2_component.dir/src/io/capturer/capturer.cpp.o`（465544 B）与 `librmcs_auto_aim_v2_component.so`（728360 B）经 `readelf -h` 均为 `Machine: AArch64`（Oct 16 产物）；arm64 sysroot 提供 `MVSUSB3Core`（`/opt/sysroots/arm64/opt/mvs-usb3-core`）。原生 x86_64 全量构建（`./.script/build-rmcs`）亦 6 包全绿（`Finished <<< rmcs_auto_aim_v2 [56.4s]`，EXIT=0）。⇒ `--packages-skip rmcs_auto_aim_v2` 并非必需。
 - 相机内参走 `AUTOAIM_CONFIG`。
+
+---
+
+## C2 评估：v2 独有提交逐条裁定（2026-10-19）
+
+共同祖先 `ffebdb7`；v2 独有 **23** 个提交（`git rev-list --count ffebdb7..2c3122f`），v3 独有 **176** 个（`ffebdb7..HEAD`）。
+
+**结论：无法直接 `git merge` / `cherry-pick`。** v3 已把架构从「独立进程 `rmcs_auto_aim_v2_runtime` + 共享内存 `feishu`」改写为「单进程插件 `AutoAimComponent` + `AutoAimCapturerComponent`」，接口从 `/gimbal/auto_aim/*` 改为 `/auto_aim/*`。除纯参数文件外，所有 v2 提交都触碰 `src/runtime.cpp`、`src/utility/shared/context.hpp` 或改写前的 `src/component.cpp` —— 其中 `runtime.cpp`、`context.hpp`、`module/predictor/*`、`module/identifier/*`、`module/tracker/decider.*` 在 v3 中**已不存在**。故只能「逐提交评估 + 手工移植」。
+
+### 逐提交裁定
+
+| # | commit | 主题 | 裁定 | v3 现状 |
+|---|---|---|---|---|
+| 1 | `433b4b0` | make it work | 跳过(V2-ARCH) | 依赖已在 v3 package.xml；`ekf_parameter.hpp` 已不存在 |
+| 2 | `a15dde1` | Merge upstream | 跳过(merge) | — |
+| 3 | `da6ebfd` | complete gimbal control part | 跳过(V2-ARCH) | feishu 共享内存 gimbal 控制；`runtime.cpp`/`context.hpp` 已不存在 |
+| 4 | `d3ec9ef` | fix jamming ipc channel | 跳过(V2-ARCH) | 仅在有 `runtime.cpp` 时有意义 |
+| 5 | `3da1eaa` | fix sudden head shake on boot | 跳过(V2-ARCH) | v3 `component.cpp` 另有 100ms `current_trackable` 超时机制 |
+| 6 | `67da4d3` | add params file classify | 跳过(V2-ARCH) | v3 改用 `AUTOAIM_CONFIG`（`RMCS_ROBOT_TYPE` 在 v3 完全不出现） |
+| 7 | `8d6a9ac` | auto reset when ekf cannot converge | **移植候选(ALGO)** | v3 无收敛失败计数器（`-S'coverged_fail_count'` 为空）；仅有 `timeout_seconds` 与 `diverged()` |
+| 8 | `662496e` | temporarily fixed prediction latency | 已在 v3 | v3 用 `fly_time + config.shoot_delay`（`fire_control.cpp:316-318`） |
+| 9 | `e63f362` | add config for infantry | 数据(PARAM) | `config/dual-infantry.yaml` 在 v3 不存在 |
+| 10 | `f7f7a83` | add target position transmit | 已被取代(IFACE) | `/gimbal/auto_aim/target_position` → v3 `/auto_aim/robot_center`；`base_to_camera()` 不存在 |
+| 11 | `2eb09b1` | auto select scan direction | 缺失(IFACE，低价值) | v3 无 `scan_direction` 任何痕迹 |
+| 12 | `4bdafff` | Update with upstream #2 | 已在 v3 | v3 自研 `fire_control.cpp` + `trajectory_solution.cpp`；`aim_point_chooser` 不存在 |
+| 13 | `2a8cdd0` | merge change from upstream | 跳过(V2-ARCH) | 旧 `identifier/model` 流水线在 v3 已被 `module/detector/*` 取代 |
+| 14 | `b534ae5` | Merge upstream | 跳过(merge) | — |
+| 15 | `99ec8eb` | simple shoot permit deciding | 已被取代(ALGO) | v3 `module/fire_control/shoot_evaluator.cpp::evaluate()` 更强 |
+| 16 | `58ab8ce` | fix enemy position lookup | 跳过(V2-ARCH) | 共享内存位置管线 |
+| 17 | `755a895` | dynamic enemy color check | **已在 v3** | `auto_aim.cpp:158-161` `detector.update_detect_color` + `:244-246` `tracker->update_track_color`（由 `id.color()` 驱动） |
+| 18 | `9daa9e0` | change bullet_speed interface type | 已被取代(IFACE) | v3 读配置常量 `bullet_speed`（`executor.yaml:108` = 22.5），不订阅 `/referee/shooter/initial_speed` |
+| 19 | `13bf274` | update sentry params | 数据(PARAM) | 文件在 v3 不存在 |
+| 20 | `5c91108` | update sentry params | 数据(PARAM) | 同上 |
+| 21 | `0eb48b8` | update mec-hero params | 数据(PARAM) | 文件在 v3 不存在 |
+| 22 | `a25be28` | update mini-infantry params | 数据(PARAM) | 同上 |
+| 23 | `2c3122f` | 优化自瞄（dual-infantry 实测） | **移植候选(ALGO，最高价值)** | 大部分缺失；见下 |
+
+### 建议手工移植的两项
+
+**(1) `2c3122f`（最高价值）** —— 触 11 文件，真实改动：
+- `component.cpp`：新增 `odom_to_muzzle_transform`（查 `MuzzleLink`）。
+- `fire_control.cpp::solve()` 新签名：`(snapshot, Transform odom_to_muzzle_transform, armors_3d, Tracker&)`；**枪口坐标系**相对 yaw；`|yaw| > π/3` 跳过；近/远 `final_yaw` 选择（`target_d>0.9 ? atan2(armor.y,armor.x) : atan2(world.y,world.x)`）；预测离群则 `tracker.reset(genre)`（`(armor_3d_pos - best_armor_pos).norm() > 1.0`）。
+- `pose_estimator.cpp`：armor 朝向过滤（`armor_normal.dot(cam_dir)`）。
+- `tracker.cpp/.hpp`：新增 `reset(DeviceId)`。
+- `decider.cpp/.hpp`：`reset_tracker()`，`max_coverged_fail_count` 80→40。
+- 目标文件（v3）：`src/kernel/fire_control.cpp`、`src/module/tracker/model/robot.cpp`、新增 tracker `reset()` API。v3 侧对应物：`module/tracker/model/robot.cpp:174-196`（逐 armor 可见性 `yaw`/`armor_face`）与 `:646 converge()`。
+
+**(2) `8d6a9ac`** —— EKF 不收敛自动重置。v3 目前只有 `timeout_seconds`（`tracker.cpp:230-243`）与 `diverged()`（`tracker.cpp:362`）；v2 用 `coverged_fail_count` + `max_coverged_fail_count`（最终值 40）在连续 N 帧不收敛后重置追踪器。移植点：v3 `module/tracker/model/robot.cpp`（+ 可能 `tracker.cpp`）。
+
+### PARAM：需要按 v3 结构重写，不能直接拷文件
+
+v2 的五份机型 yaml（`dual-infantry`/`dual-sentry`/`mec-hero`/`mini-infantry`）携带：
+- **相机内参/畸变**（各机型不同，fx≈1.756e3~1.762e3，cx≈689~736，cy≈536~565）；
+- **`bullet_speed`**：mini-infantry 20 m/s、hero 11 m/s（v3 默认 22.5）；
+- **`fire_control`**：infantry `k=0.019`、hero `k=0.005`、`shoot_delay=0.1`、`coming=60/leaving=20/outpost_coming=70/outpost_leaving=30/angular_velocity_threshold=120°/s`；
+- **`model_location`**：sentry/hero `shenzhen-0708.onnx`、mini-infantry `tongji-yolov5.xml`、infantry `shenzhen-0526.onnx`（v3 当前用 `shenzhen-0526.onnx`）；
+- **曝光/增益** `2000 us / 16.9807`、per-robot framerate。
+
+v3 只有单一 `config/config.yaml` + `config/executor.yaml`（无 per-robot 文件、无 `RMCS_ROBOT_TYPE` 分支），选择机制是 `AUTOAIM_CONFIG` / `custom.yaml` 覆盖。且 v2 的 config 结构（`capturer`/`identifier`/`pose_estimator.transforms`/`visualization` 块）与 v3 已重组，**直接拷文件无法反序列化**。
+
+### 未决
+- 是否现在手工移植 `2c3122f` + `8d6a9ac`。二者涉及发射控制数学与跟踪器状态机；本地无相机/NPU（rknn 在 x86 不可用），**无法验证行为**，只能保证编译通过。
