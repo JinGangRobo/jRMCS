@@ -350,7 +350,7 @@ $ git diff --stat 2c3122f 8df0266 | tail -1
 1. **dual-infantry 是 P0**：v2 最后一次自瞄调参提交标题即“使用dual-infantry测试”，而 v3 当前 `dual-infantry.yaml` 里**没有** `auto_aim_component`（见主题 `18`）——两份文档需一起执行。
 2. **`/gimbal/auto_aim/scan_direction`**：v2 `rmcs_core` 读取但 v2 子模块无输出；不确定是否由 `autopilot_client` 侧填写（**未核实**，`autopilot_client` 不在本次范围）。
 3. **`selected_scan_direction` / `target` / `shoot_mode`** 等 shm 字段在 v3 语义下的落点（是否需要新接口）**未决**。
-4. **v3 `package.xml` 仍声明 `hikcamera`**，但 `rmcs_ws/src` 无该包 —— 是否影响 `rosdep`/构建顺序**未核实**（CI 若用 `rosdep install` 可能报错）。
+4. **v3 `package.xml` 的 `<depend>hikcamera</depend>` 是陈旧遗留（已定案，见文末「迁移状态」）**：`CMakeLists.txt` 无 `find_package(hikcamera)`，`capturer.cpp` 用的是包内本地头文件 `src/io/capturer/hikcamera.hpp`；真实相机 SDK 依赖是 sysroot 提供的 `MVSUSB3Core`。
 5. **v3 `models/` 通过 `git-lfs` 还是直存**、`.rknn` 模型是否需要随包分发**未核实**（`models/*.onnx` 与 `*.rknn` 均在仓库内）。
 6. **v3 推理后端若为 `rknn`**：`detector` 配置里的 `infer_device: "CPU"` 对 RKNN 后端是否生效**未核实**（`armor_detection.cpp:170-183` 仅在非空时覆盖 `model.infer_device`）。
 7. `git diff` 数据来自 `/workspaces/RMCS/rmcs_ws/src/rmcs_auto_aim_v2` 的本地克隆（同一远端，两个 commit 均可用），命令：`git diff --name-status 2c3122f 8df0266`。
@@ -362,4 +362,5 @@ $ git diff --stat 2c3122f 8df0266 | tail -1
 **已完成（rmcs_core 侧 + config 接入）。** 自瞄子模块本体未改动。
 - `hardware/dual_infantry.cpp` 新增 `/gimbal/auto_aim/imu_snapshot`（必开）与可选 `/gimbal/auto_aim/exposure_signal`（`camera_sync_gpio_channel` 控制，默认 -1 关闭）。
 - `dual-infantry.yaml` 接入 `rmcs::AutoAimCapturerComponent`（`use_hardware_sync: false`）。
-- **未验证/待办**：`AutoAimCapturerComponent` 依赖 `hikcamera`，因 `--packages-skip rmcs_auto_aim_v2` 未编译；相机内参走 `AUTOAIM_CONFIG`。
+- **B10 取证（已结案）**：`rmcs_auto_aim_v2`（含 `AutoAimCapturerComponent`）**可且已成功交叉编译为 arm64**——`rmcs_ws/build-cross-arm64/rmcs_auto_aim_v2/CMakeFiles/rmcs_auto_aim_v2_component.dir/src/io/capturer/capturer.cpp.o`（465544 B）与 `librmcs_auto_aim_v2_component.so`（728360 B）经 `readelf -h` 均为 `Machine: AArch64`（Oct 16 产物）；arm64 sysroot 提供 `MVSUSB3Core`（`/opt/sysroots/arm64/opt/mvs-usb3-core`）。原生 x86_64 全量构建（`./.script/build-rmcs`）亦 6 包全绿（`Finished <<< rmcs_auto_aim_v2 [56.4s]`，EXIT=0）。⇒ `--packages-skip rmcs_auto_aim_v2` 并非必需。
+- 相机内参走 `AUTOAIM_CONFIG`。
