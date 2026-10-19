@@ -114,6 +114,7 @@ docs-mig/
 | Batch9 | 18 config（三份机型） | ✅ | ✅ | — | ☐ | 完成（各 24 组件，结构校验通过） |
 | Batch10 | pid-tune-tool 替代 | ✅ | ✅ | — | ☐ | 完成（identification + ValueCollector config） |
 | Batch11 | 工程链路收口（A1–A10） | ✅ | ✅ | ✅ | — | 完成（C++ 标准分层、CI smoke 覆盖 `rmcs_core`、clang-tidy 评估、CC1–CC12 文档、hikcamera 依赖清理、取消默认 skip） |
+| Batch12 | C2 auto_aim v2 提交合并 | — | ✅ | — | — | 暂停（逐条裁定已落盘 `topics/17`；本地无相机/NPU，无法验证行为） |
 
 > 说明：`单测/静态` 以 `clang-format --dry-run -Werror`（改动文件）+ `nm` 插件符号核查 + `yaml.safe_load` 结构校验代替；
 > `实机` 一列留空（☐）表示需上真机标定，相关 TODO 已写入代码与 config。
