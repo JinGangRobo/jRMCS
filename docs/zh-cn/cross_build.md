@@ -59,7 +59,11 @@ build-rmcs-cross --target-arch arm64 --packages-up-to rmcs_executor
 并且默认启用：
 
 - `--merge-install`
-- 不使用 `--symlink-install`
+- 使用 `--symlink-install`（`install-cross-<arch>` 中的文件是指向 `build-cross-<arch>` 的符号链接）
+
+> 注意：`--symlink-install` 使得 install 目录内的可执行文件/资源为符号链接。若把
+> `install-cross-<arch>` 直接拷贝或打包（而不是让 `sync-remote`/unison 解引用同步），会
+> 得到指向 build 目录的悬空链接；跨机部署请使用 `.script/sync-remote` 或显式解引用。
 
 ## 5. 本地快速自检
 
