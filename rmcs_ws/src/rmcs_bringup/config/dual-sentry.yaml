@@ -9,6 +9,7 @@ rmcs_executor:
 
       - rmcs_core::referee::command::Interaction -> referee_interaction
       - rmcs_core::referee::command::interaction::Ui -> referee_ui
+      - rmcs_core::referee::app::ui::DualSentry -> dual_sentry_ui
 
       - rmcs_core::controller::gimbal::SimpleGimbalController -> gimbal_controller
       - rmcs_core::controller::gimbal::DualYawSolver -> dual_yaw_solver
@@ -28,6 +29,7 @@ rmcs_executor:
       - rmcs_core::controller::chassis::JOmniWheelController -> omni_wheel_controller
 
       - rmcs::AutoAimComponent -> auto_aim_component
+      - rmcs::AutoAimCapturerComponent -> auto_aim_capturer
 
       - rmcs_core::controller::diagnosis::Diagnosis -> diagnosis
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
@@ -40,19 +42,22 @@ value_broadcaster:
       - /debug/top_yaw/raw_angle
       - /chassis/power
       - /chassis/supercap/voltage
-      - /gimbal/yaw/angle
-      - /debug/solver/pitch
-      - /debug/solver/yaw
-      - /debug/aim/delay
-      - /debug/solver/pitch_err
-      - /debug/solver/yaw_err
+      - /debug/sliding_value
       - /gimbal/top_yaw/control_torque
       - /gimbal/bottom_yaw/control_torque
       - /gimbal/top_yaw/angle
       - /gimbal/bottom_yaw/angle
 
+auto_aim_capturer:
+  ros__parameters:
+    # Hardware-synchronised capture requires the camera exposure signal wired to a C-board GPIO
+    # channel. Until that is connected, run in software-sync mode.
+    use_hardware_sync: false
+
 dual_sentry_hardware:
   ros__parameters:
+    # TODO(hardware-migration): replace the placeholder serials with the real board serials
+    # before running on hardware; the SDK throws if no board matches.
     board_serial_top_board: "placeholder-top"
     board_serial_bottom_board: "placeholder-bottom"
     bottom_yaw_motor_zero_point: 4000
@@ -65,9 +70,8 @@ dual_sentry_hardware:
 
 chassis_controller:
   ros__parameters:
-    translational_velocity_limit: 30.0
-    angular_velocity_limit: 4.0
-    autopilot_spin_velocity_default: 3.5
+    translational_velocity_max: 30.0
+    angular_velocity_max: 4.0
 
 gimbal_controller:
   ros__parameters:
@@ -75,6 +79,10 @@ gimbal_controller:
 
     upper_limit: -0.35
     lower_limit: 0.5
+
+    # TODO(hardware-migration): v2 had no yaw mechanical limit; confirm on the real robot.
+    yaw_upper_limit: 1000000.0
+    yaw_lower_limit: -1000000.0
 
     joystick_left_bias_y: 0.0
     joystick_left_bias_x: 0.0
@@ -99,6 +107,7 @@ dual_yaw_controller:
     bottom_yaw_smc_phi: 2.0
     bottom_yaw_inertia: 2.0
 
+    # TODO(hardware-migration): v2 value is in the old raw-current unit; re-tune in N*m.
     bottom_yaw_max_torque: 16384.0
 
 omni_wheel_controller:
@@ -107,7 +116,7 @@ omni_wheel_controller:
     chassis_radius_x: 0.3
     chassis_radius_y: 0.3
     wheel_radius: 0.07
-    friction_coefficient: 0.6
+    moment_of_inertia: 4.08
 
     spinning_bias_adjust: false
     spinning_bias_coefficient: -0.06
@@ -116,7 +125,6 @@ pitch_angle_err_pid_controller:
   ros__parameters:
     measurement: /gimbal/pitch/control_angle_error
     control: /gimbal/pitch/control_velocity
-    enable: /gimbal/pitch/alive
     kp: 8.0
     ki: 0.001
     kd: 1.0
@@ -128,7 +136,6 @@ pitch_velocity_pid_controller:
     measurement: /gimbal/pitch/velocity_imu
     setpoint: /gimbal/pitch/control_velocity
     control: /gimbal/pitch/control_torque
-    enable: /gimbal/pitch/alive
     kp: 2.5
     ki: 0.05
     kd: 45.0
@@ -181,7 +188,7 @@ right_friction_velocity_pid_controller:
 
 bullet_feeder_velocity_pid_controller:
   ros__parameters:
-    measurement: /gimbal/bullet_feeder/velocity_filtered
+    measurement: /gimbal/bullet_feeder/velocity
     setpoint: /gimbal/bullet_feeder/control_velocity
     control: /gimbal/bullet_feeder/control_torque
     kp: 5.0
