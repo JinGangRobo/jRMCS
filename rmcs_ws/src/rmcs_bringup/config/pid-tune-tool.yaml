@@ -1,0 +1,104 @@
+# Hardware-in-the-loop identification / PID tuning configuration.
+#
+# The reATRM `PidTuneTool` hardware model no longer exists in v3. This
+# configuration replaces it with the built-in `identification` controllers plus
+# `debug::ValueCollector`, and runs on top of the dual-infantry board stack so
+# that `/remote/*` (used by the identification controllers' mode switches) is
+# available.
+#
+# Usage: ros2 launch rmcs_bringup rmcs.launch.py robot:=pid-tune-tool
+#
+# Controls (DR16 switches): with the left switch in the middle position, the
+# right switch selects the active tool (down/middle/up). Both tools command
+# `<target>/control_torque`, so the normal gimbal PID chain is intentionally not
+# instantiated here.
+
+rmcs_executor:
+  ros__parameters:
+    update_rate: 1000.0
+    components:
+      - rmcs_core::hardware::DualInfantry -> hardware
+
+      - rmcs_core::controller::identification::SweptFrequencyController -> pitch_sweep_controller
+      - rmcs_core::controller::identification::StaticTorqueTestController -> yaw_static_torque_controller
+
+      - rmcs_core::debug::ValueCollector -> value_collector
+      - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
+
+value_broadcaster:
+  ros__parameters:
+    publish_divider: 1
+
+    forward_list:
+      - /gimbal/pitch/angle
+      - /gimbal/pitch/velocity
+      - /gimbal/pitch/torque
+      - /gimbal/pitch/control_torque
+      - /gimbal/top_yaw/angle
+      - /gimbal/top_yaw/velocity
+      - /gimbal/top_yaw/torque
+      - /gimbal/top_yaw/control_torque
+      - /gimbal/bottom_yaw/angle
+      - /gimbal/bottom_yaw/velocity
+
+
+hardware:
+  ros__parameters:
+
+    # TODO(hardware): confirm the board serials of the real dual-infantry boards.
+    board_serial_top_board: "placeholder-top"
+    board_serial_bottom_board: "placeholder-bottom"
+
+    # Migrated from reATRM dual-infantry (v2); re-calibrate on the real robot.
+    bottom_yaw_motor_zero_point: 6705
+    top_yaw_motor_zero_point: 7850
+    pitch_motor_zero_point: 35030
+
+    imu_bias_x: 3
+    imu_bias_y: 8
+    imu_bias_z: 2
+
+
+# Pitch: logarithmic frequency sweep (chirp) injected on top of the torque command.
+pitch_sweep_controller:
+  ros__parameters:
+    target: /gimbal/pitch
+    sweep: true
+    logarithmic: true
+    start_freq: 0.5
+    end_freq: 50.0
+    duration: 30.0
+    amplitude: 0.5
+
+
+# Top yaw: quasi-static torque test across the travel range.
+yaw_static_torque_controller:
+  ros__parameters:
+    target: /gimbal/top_yaw
+    interval_angle: 0.05
+    wait_time: 1.0
+    border_clip: 0.1
+    position_kp: 15.0
+    position_ki: 0.0
+    position_kd: 0.0
+    velocity_kp: 2.0
+    velocity_ki: 0.01
+    velocity_kd: 0.0
+
+
+# Dumps the tuning-relevant signals to a CSV for offline analysis.
+value_collector:
+  ros__parameters:
+    csv_path: /tmp/rmcs_pid_tune_<timestamp>.csv
+    write_interval: 1
+    flush_interval: 100
+
+    signals:
+      - /gimbal/pitch/angle
+      - /gimbal/pitch/velocity
+      - /gimbal/pitch/torque
+      - /gimbal/pitch/control_torque
+      - /gimbal/top_yaw/angle
+      - /gimbal/top_yaw/velocity
+      - /gimbal/top_yaw/torque
+      - /gimbal/top_yaw/control_torque
