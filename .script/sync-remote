@@ -1,15 +1,18 @@
 #!/bin/python3
 
-import socket
-import selectors
 import os
+import platform
+import re
+import selectors
+import socket
 import subprocess
+import sys
 
 from colorama import Fore, Style
 
 
 RMCS_PATH = os.getenv("RMCS_PATH") or "/workspaces/RMCS"
-SRC_DIR = os.path.join(RMCS_PATH, "rmcs_ws", "install")
+INSTALL_DIR = os.path.join(RMCS_PATH, "rmcs_ws", "install")
 DST_DIR = "ssh://remote//rmcs_install"
 SOCKET_PATH = "/tmp/sync-remote"
 
@@ -18,8 +21,33 @@ COLORED_SYNC_FLAG = (
     f"{Fore.LIGHTGREEN_EX}{Style.BRIGHT}Nothing to do{Style.RESET_ALL}:".encode("ascii")
 )
 
+_ARCH_MAP = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+}
 
-def create_process():
+
+def _print_usage():
+    cross_dir = os.path.join(RMCS_PATH, "rmcs_ws", "install-cross-<arch>")
+    print(f"""
+Usage: sync-remote [--target-arch <arm64|amd64>]
+
+Synchronize the local install directory to the remote /rmcs_install.
+
+The source directory is selected from the target architecture stored in
+~/.ssh/config (Host remote, "# RMCS_TARGET_ARCH=<arch>"):
+
+  target == local arch : {INSTALL_DIR}
+  target != local arch : {cross_dir}
+
+Options:
+  --target-arch <arm64|amd64>  Override the configured target architecture.
+""")
+
+
+def create_process(src_dir):
     command = [
         "unison",
         "-ignorearchives",
@@ -28,10 +56,10 @@ def create_process():
         "-repeat",
         "watch",
         "-times",
-        SRC_DIR,
+        src_dir,
         DST_DIR,
         "-force",
-        SRC_DIR,
+        src_dir,
         "-follow",
         "Name *",
     ]
@@ -65,10 +93,128 @@ def finish_connection(conn: socket):
         conn.close()
 
 
+def _local_arch():
+    return _ARCH_MAP.get(platform.machine().lower())
+
+
+def _read_target_arch():
+    try:
+        with open(os.path.expanduser("~/.ssh/config")) as f:
+            config = f.read()
+    except FileNotFoundError:
+        return None
+
+    block = re.search(r"Host remote\n(?:(?!Host ).+\n)*", config)
+    if not block:
+        return None
+
+    match = re.search(r"#[ \t]*RMCS_TARGET_ARCH=(\S+)", block.group(0))
+    return match.group(1) if match else None
+
+
+def _parse_target_arch(argv):
+    explicit = None
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            _print_usage()
+            sys.exit(0)
+        if arg == "--target-arch":
+            if i + 1 >= len(argv):
+                sys.exit(
+                    "Error: --target-arch requires a value (arm64 or amd64)."
+                )
+            explicit = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--target-arch="):
+            explicit = arg[len("--target-arch=") :]
+        else:
+            sys.exit(f"Error: Unknown argument '{arg}'.")
+        i += 1
+
+    if explicit is not None and explicit not in ("arm64", "amd64"):
+        sys.exit(f"Error: Unsupported arch '{explicit}'. Use arm64 or amd64.")
+
+    if explicit is not None:
+        return explicit
+
+    target = _read_target_arch()
+    if target is None:
+        return None
+    if target not in ("arm64", "amd64"):
+        print(
+            "Warning: ignoring invalid RMCS_TARGET_ARCH="
+            f"'{target}' in ~/.ssh/config.",
+            file=sys.stderr,
+        )
+        return None
+    return target
+
+
+def _resolve_src_dir(target_arch):
+    local_arch = _local_arch()
+
+    if target_arch is None:
+        print(
+            "Warning: no RMCS_TARGET_ARCH configured for 'remote' in "
+            "~/.ssh/config; syncing the native install directory. "
+            "Run 'set-remote <remote_host> --arch <arm64|amd64>' to set it.",
+            file=sys.stderr,
+        )
+        return INSTALL_DIR, local_arch
+
+    if local_arch is None:
+        print(
+            "Warning: could not detect the local architecture; assuming it "
+            f"differs from the target '{target_arch}'.",
+            file=sys.stderr,
+        )
+
+    if target_arch == local_arch:
+        return INSTALL_DIR, local_arch
+
+    cross_dir = os.path.join(RMCS_PATH, "rmcs_ws", f"install-cross-{target_arch}")
+    return cross_dir, local_arch
+
+
+def _require_src_dir(src_dir, target_arch, local_arch):
+    if os.path.isdir(src_dir):
+        return
+
+    lines = [f"Error: sync source not found: {src_dir}"]
+    if target_arch is None:
+        lines.append("  Build the workspace or set the arch first: build-rmcs")
+    else:
+        other = "amd64" if target_arch == "arm64" else "arm64"
+        lines.append(
+            f"  Target arch is {target_arch} (local arch: {local_arch}) "
+            "but it has not been built."
+        )
+        lines.append(f"  Run: build-rmcs-cross --target-arch {target_arch}")
+        lines.append(
+            "  Or change the target arch: "
+            f"set-remote <remote_host> --arch {other}"
+        )
+    sys.exit("\n".join(lines))
+
+
 def main():
+    target_arch = _parse_target_arch(sys.argv[1:])
+    src_dir, local_arch = _resolve_src_dir(target_arch)
+    _require_src_dir(src_dir, target_arch, local_arch)
+
+    print(
+        f"Syncing {src_dir} -> {DST_DIR} "
+        f"(target: {target_arch or 'native'}, local: {local_arch or 'unknown'}).",
+        flush=True,
+    )
+
     selector = selectors.DefaultSelector()
 
-    process, pipe_stdout = create_process()
+    process, pipe_stdout = create_process(src_dir)
     selector.register(pipe_stdout, selectors.EVENT_READ, data=None)
 
     server = create_server()

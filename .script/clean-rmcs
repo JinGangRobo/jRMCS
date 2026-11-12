@@ -11,3 +11,15 @@ rm -rf -- \
     "${RMCS_PATH}/rmcs_ws/build" \
     "${RMCS_PATH}/rmcs_ws/install" \
     "${RMCS_PATH}/rmcs_ws/log"
+
+rm -rf -- \
+    "${RMCS_PATH}/rmcs_ws/build-cross-arm64" \
+    "${RMCS_PATH}/rmcs_ws/install-cross-arm64" \
+    "${RMCS_PATH}/rmcs_ws/log-cross-arm64" 
+
+rm -rf -- \
+    "${RMCS_PATH}/rmcs_ws/build-cross-amd64" \
+    "${RMCS_PATH}/rmcs_ws/install-cross-amd64" \
+    "${RMCS_PATH}/rmcs_ws/log-cross-amd64" 
+
+rm "${RMCS_PATH}/rmcs_ws/compile_commands.json"

@@ -291,10 +291,17 @@ class MDNSClient:
 
 def _print_usage():
     print("""
-Usage: set-remote <remote_host>
+Usage: set-remote <remote_host> [--arch <arm64|amd64>]
+
+<remote_host> may be one of:
   1. IPv4 / IPv6 address (e.g., 169.254.233.233)
   2. IPv4 / IPv6 link-local address (e.g., fe80::...%eth0)
   3. mDNS hostname (e.g., my-sentry.local)
+
+Options:
+  --arch <arm64|amd64>  Target architecture of the remote host. It is stored
+                        in ~/.ssh/config as a comment for later use.
+                        If omitted, you will be prompted interactively.
 """)
 
 
@@ -336,7 +343,77 @@ def mdns_lookup(hostname):
             term.draw(client.discovered)
 
 
-def set_remote(address):
+_REMOTE_BLOCK = re.compile(r"Host remote\n(?:(?!Host ).+\n)*")
+_ARCH_LINE = re.compile(r"[ \t]*#[ \t]*RMCS_TARGET_ARCH=")
+
+
+def _read_current_arch(ssh_path):
+    try:
+        config = open(ssh_path).read()
+    except FileNotFoundError:
+        return None
+
+    block = _REMOTE_BLOCK.search(config)
+    if not block:
+        return None
+
+    match = re.search(r"#[ \t]*RMCS_TARGET_ARCH=(\S+)", block.group(0))
+    return match.group(1) if match else None
+
+
+def _select_arch(current):
+    options = ("arm64", "amd64")
+    hint = f"  (current: {current})" if current else ""
+    prompt = f"Target architecture:  [1] arm64   [2] amd64{hint}  > "
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    new = termios.tcgetattr(fd)
+    new[3] &= ~(termios.ECHO | termios.ICANON)
+    new[6][termios.VMIN] = 1
+    new[6][termios.VTIME] = 0
+
+    buf = ""
+    try:
+        termios.tcsetattr(fd, termios.TCSANOW, new)
+        while True:
+            sys.stdout.write(f"\r\033[K{prompt}{buf}")
+            sys.stdout.flush()
+            raw = sys.stdin.buffer.raw.read(1)
+            if raw == b"\x03":
+                raise KeyboardInterrupt
+            if raw in (b"\r", b"\n"):
+                if buf in ("1", "2"):
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    return options[int(buf) - 1]
+                buf = ""
+            elif raw in (b"\x7f", b"\x08"):
+                buf = buf[:-1]
+            elif raw.isdigit():
+                buf = raw.decode()
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, old)
+
+
+def _with_arch_comment(block, arch):
+    lines = [line for line in block.splitlines() if not _ARCH_LINE.match(line)]
+
+    result = []
+    inserted = False
+    for line in lines:
+        result.append(line)
+        if line.startswith("    HostName "):
+            result.append(f"    # RMCS_TARGET_ARCH={arch}")
+            inserted = True
+
+    if not inserted:
+        sys.exit("Error: Cannot find expected entries in SSH config.")
+
+    return "\n".join(result) + "\n"
+
+
+def set_remote(address, arch):
     ssh_path = os.path.join(os.getenv("HOME"), ".ssh", "config")
     try:
         config = open(ssh_path).read()
@@ -360,17 +437,83 @@ def set_remote(address):
     if not n1 or not n2:
         sys.exit("Error: Cannot find expected entries in SSH config.")
 
+    block = _REMOTE_BLOCK.search(config)
+    if not block:
+        sys.exit("Error: Cannot find expected entries in SSH config.")
+    config = (
+        config[: block.start()]
+        + _with_arch_comment(block.group(0), arch)
+        + config[block.end() :]
+    )
+
     with open(ssh_path, "w") as f:
         f.write(config)
 
 
+def _parse_args(argv):
+    host = None
+    arch = None
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            _print_usage()
+            sys.exit(0)
+        if arg == "--arch":
+            if i + 1 >= len(argv):
+                sys.exit("Error: --arch requires a value (arm64 or amd64).")
+            arch = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--arch="):
+            arch = arg[len("--arch=") :]
+        elif arg.startswith("-"):
+            sys.exit(f"Error: Unknown option '{arg}'.")
+        elif host is None:
+            host = arg
+        else:
+            sys.exit("Error: Too many arguments.")
+        i += 1
+
+    if host is None:
+        _print_usage()
+        sys.exit(1)
+
+    if arch is not None and arch not in ("arm64", "amd64"):
+        sys.exit(f"Error: Unsupported arch '{arch}'. Use arm64 or amd64.")
+
+    return host, arch
+
+
+def _resolve_arch(arch, ssh_path):
+    if arch is not None:
+        return arch
+
+    current = _read_current_arch(ssh_path)
+    if sys.stdin.isatty():
+        return _select_arch(current)
+
+    if current is not None:
+        print(
+            "Warning: no --arch given and no interactive terminal; "
+            f"keeping the existing architecture '{current}'.",
+            file=sys.stderr,
+        )
+        return current
+
+    sys.exit(
+        "Error: no --arch given and stdin is not interactive; "
+        "pass --arch <arm64|amd64>."
+    )
+
+
 if __name__ == "__main__":
     try:
-        if len(sys.argv) != 2 or sys.argv[1] in ("-h", "--help"):
-            _print_usage()
-            sys.exit(1)
+        host, arch = _parse_args(sys.argv[1:])
+        ssh_path = os.path.join(os.getenv("HOME"), ".ssh", "config")
+        arch = _resolve_arch(arch, ssh_path)
 
-        host = sys.argv[1]
         if host.endswith(".local") or host.endswith(".local."):
             print(
                 "An mDNS hostname was provided."
@@ -378,10 +521,11 @@ if __name__ == "__main__":
             )
             host = mdns_lookup(host)
 
-        set_remote(host)
+        set_remote(host, arch)
         print(
             f"Successfully set remote host to "
-            f"{Fore.LIGHTGREEN_EX}{host}{Style.RESET_ALL}."
+            f"{Fore.LIGHTGREEN_EX}{host}{Style.RESET_ALL} "
+            f"(target arch: {arch})."
         )
     except KeyboardInterrupt:
         sys.exit(1)
