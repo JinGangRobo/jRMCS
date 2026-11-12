@@ -15,6 +15,7 @@
   <depend>pluginlib</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
+  <depend>urdf</depend>
   <depend>serial</depend>
   <depend>rmcs_utility</depend>
   <depend>rmcs_msgs</depend>

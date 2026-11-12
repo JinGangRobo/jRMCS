@@ -2,6 +2,7 @@
   <class type="rmcs_core::hardware::DualInfantry" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::DualSentry" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::Hero" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::hardware::HeavyArmor" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::MiniInfantry" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::hardware::Px4VisionBridge" base_class_type="rmcs_executor::Component" />
@@ -45,6 +46,8 @@
   <class type="rmcs_core::controller::pid::FrictionWheelPidRecorder" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::adrc::AdrcController" base_class_type="rmcs_executor::Component" />
+
+  <class type="rmcs_core::controller::arm::ArmConfig" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::diagnosis::Diagnosis" base_class_type="rmcs_executor::Component" />
 
