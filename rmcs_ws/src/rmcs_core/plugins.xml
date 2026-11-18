@@ -48,6 +48,8 @@
   <class type="rmcs_core::controller::adrc::AdrcController" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::arm::ArmConfig" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::controller::arm::ArmSolver" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::controller::arm::ArmController" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::diagnosis::Diagnosis" base_class_type="rmcs_executor::Component" />
 
