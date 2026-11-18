@@ -23,7 +23,7 @@ namespace rmcs_core::hardware::device {
 
 class DmMotor {
 public:
-    enum class Type : uint8_t { kJ4310 };
+    enum class Type : uint8_t { kJ4310 ,kJ4340,kJ8009p};
 
     enum class ErrorMsg : uint8_t {
         // Error field of the DM protocol: 0 disabled / 1 enabled / 8 over voltage /
@@ -112,6 +112,12 @@ public:
             // Note: maximum torque is taken from the manufacturer's documentation and is used as a
             // reference only; the MIT command clamps to the protocol range regardless.
             max_torque_ = 10.0;
+            break;
+        case Type::kJ4340:
+            max_torque_ = 30.0;
+            break;
+        case Type::kJ8009p:
+            max_torque_ = 40.0;
             break;
         default: std::unreachable();
         }
