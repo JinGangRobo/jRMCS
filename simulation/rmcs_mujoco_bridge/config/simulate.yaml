@@ -1,0 +1,8 @@
+mujoco_bridge:
+  ros__parameters:
+    external_simulate: true
+
+arm_solver:
+  ros__parameters:
+    gripper_enabled: true
+    controller_list: [gravity, friction]

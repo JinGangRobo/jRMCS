@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rmcs_mujoco_bridge</name>
+  <version>0.1.0</version>
+  <description>MuJoCo torque simulation for the seven-axis RMCS arm.</description>
+  <maintainer email="qzhhh@foxmail.com">developer</maintainer>
+  <license>GPL-3.0-only</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>ament_cmake_auto</build_depend>
+  <depend>ament_index_cpp</depend>
+  <depend>control_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>rmcs_executor</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tinyxml2</depend>
+  <depend>qtbase5-dev</depend>
+  <exec_depend>arm_description</exec_depend>
+  <exec_depend>rmcs_core</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

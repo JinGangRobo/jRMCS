@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.24)
+project(rmcs_mujoco_bridge)
+
+find_package(ament_cmake_auto REQUIRED)
+ament_auto_find_build_dependencies()
+find_package(tinyxml2 REQUIRED)
+
+set(MUJOCO_ROOT "" CACHE PATH "Root of an installed MuJoCo SDK")
+find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h HINTS "${MUJOCO_ROOT}/include" REQUIRED)
+find_library(MUJOCO_LIBRARY mujoco HINTS "${MUJOCO_ROOT}/lib" REQUIRED)
+
+ament_auto_add_library(${PROJECT_NAME} SHARED
+  src/mujoco_bridge.cpp src/position_test.cpp src/interactive_target.cpp src/trajectory_target.cpp)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
+target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE "${MUJOCO_INCLUDE_DIR}")
+target_link_libraries(${PROJECT_NAME} "${MUJOCO_LIBRARY}" tinyxml2::tinyxml2)
+get_filename_component(MUJOCO_LIBRARY_DIR "${MUJOCO_LIBRARY}" DIRECTORY)
+set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "${MUJOCO_LIBRARY_DIR}")
+
+option(RMCS_MUJOCO_BUILD_VIEWER "Build the interactive MuJoCo viewer" ON)
+if(RMCS_MUJOCO_BUILD_VIEWER)
+  find_package(Qt5 REQUIRED COMPONENTS Widgets)
+  add_executable(mujoco_viewer src/viewer.cpp)
+  target_compile_features(mujoco_viewer PRIVATE cxx_std_23)
+  target_compile_options(mujoco_viewer PRIVATE -Wall -Wextra -Wpedantic)
+  target_include_directories(mujoco_viewer SYSTEM PRIVATE "${MUJOCO_INCLUDE_DIR}")
+  target_link_libraries(mujoco_viewer Qt5::Widgets "${MUJOCO_LIBRARY}")
+  ament_target_dependencies(mujoco_viewer rclcpp sensor_msgs std_msgs)
+  set_target_properties(mujoco_viewer PROPERTIES INSTALL_RPATH "${MUJOCO_LIBRARY_DIR}")
+  install(TARGETS mujoco_viewer DESTINATION lib/${PROJECT_NAME})
+endif()
+
+pluginlib_export_plugin_description_file(rmcs_executor plugins.xml)
+ament_auto_package(INSTALL_TO_SHARE config)

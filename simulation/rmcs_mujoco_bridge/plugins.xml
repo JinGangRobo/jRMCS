@@ -1,0 +1,6 @@
+<library path="rmcs_mujoco_bridge">
+  <class type="rmcs_mujoco_bridge::MuJoCoBridge" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_mujoco_bridge::PositionTest" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_mujoco_bridge::InteractiveTarget" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_mujoco_bridge::TrajectoryTarget" base_class_type="rmcs_executor::Component" />
+</library>

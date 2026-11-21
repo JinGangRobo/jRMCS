@@ -1,0 +1,19 @@
+rmcs_executor:
+  ros__parameters:
+    update_rate: 1000.0
+    components:
+      - rmcs_mujoco_bridge::MuJoCoBridge -> mujoco_bridge
+      - rmcs_core::controller::arm::ArmConfig -> arm_config
+      - rmcs_mujoco_bridge::TrajectoryTarget -> trajectory_target
+      - rmcs_core::controller::arm::ArmSolver -> arm_solver
+
+mujoco_bridge:
+  ros__parameters:
+    external_simulate: true
+    initial_position: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    torque_limits: [1.2, 6.0, 3.0, 6.0, 0.6, 0.6, 0.25]
+
+arm_solver:
+  ros__parameters:
+    gripper_enabled: true
+    controller_list: [pd, gravity, friction]

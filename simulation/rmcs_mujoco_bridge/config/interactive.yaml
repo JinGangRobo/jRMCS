@@ -1,0 +1,15 @@
+rmcs_executor:
+  ros__parameters:
+    components:
+      - rmcs_mujoco_bridge::MuJoCoBridge -> mujoco_bridge
+      - rmcs_core::controller::arm::ArmConfig -> arm_config
+      - rmcs_mujoco_bridge::InteractiveTarget -> interactive_target
+      - rmcs_core::controller::arm::ArmSolver -> arm_solver
+
+mujoco_bridge:
+  ros__parameters:
+    initial_position: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+interactive_target:
+  ros__parameters:
+    max_speed: 0.5
